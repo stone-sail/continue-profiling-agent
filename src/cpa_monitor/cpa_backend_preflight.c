@@ -17,6 +17,7 @@
 #include "btf_helpers.h"
 #include "cli_cmd_helper.h"
 #include "cli_output.h"
+#include <cpa_bpf/perf_stack_capture.h>
 #include "trace_helpers.h"
 
 struct cpa_monitor_mode {
@@ -455,6 +456,22 @@ static int cpa_validate_backend_name(const struct cpa_monitor_mode *mode)
 	return -EINVAL;
 }
 
+/*
+ * The perf backend dumps user stacks in the sample record, which is cheap
+ * enough to copy as much as perf allows, so it defaults to the perf limit
+ * instead of the 8 KiB bpf default when --stack_size is not given.
+ */
+static int cpa_apply_perf_defaults(void *ctx)
+{
+	char stack_size[16];
+
+	if (cli_arg_is_set(ctx, "stack_size"))
+		return 0;
+
+	snprintf(stack_size, sizeof(stack_size), "%d", MAX_USER_STACK_DUMP_SIZE);
+	return set_arg_by_name(ctx, "stack_size", stack_size);
+}
+
 int cpa_monitor_prepare_backend(void *ctx)
 {
 	struct cpa_monitor_mode mode;
@@ -475,7 +492,7 @@ int cpa_monitor_prepare_backend(void *ctx)
 		return ret;
 
 	if (strcmp(mode.backend, "bpf") != 0)
-		return 0;
+		return cpa_apply_perf_defaults(ctx);
 
 	ret = cpa_probe_bpf_runtime(&mode, reason, sizeof(reason));
 	if (!ret)
@@ -493,5 +510,5 @@ int cpa_monitor_prepare_backend(void *ctx)
 	}
 
 	CLI_ERROR("WARNING: BPF capability check failed: %s. Falling back to perf backend; perf provides no IRQOFF records.", reason);
-	return 0;
+	return cpa_apply_perf_defaults(ctx);
 }

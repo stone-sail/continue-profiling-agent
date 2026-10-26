@@ -374,3 +374,21 @@ def test_cpa_show_rejects_invalid_target_state(tmp_path):
 
     assert return_code != 0
     assert "target_state" in f"{stdout}{stderr}"
+
+
+@pytest.mark.parametrize(
+    "extra_args, stack_size",
+    [
+        ([], "61440"),
+        (["--stack_size=8192"], "8192"),
+    ],
+)
+def test_cpa_monitor_perf_stack_size_defaults_to_perf_limit(tmp_path, extra_args, stack_size):
+    stdout, stderr, return_code = run_command(
+        ["monitor", "--backend=perf", "--duration=1", "--store_dir", str(tmp_path), *extra_args]
+    )
+
+    assert return_code == 0, f"{stdout}{stderr}"
+    confs = list(tmp_path.glob("cpa_*/conf"))
+    assert confs
+    assert f"stack_size: {stack_size}" in confs[0].read_text(encoding="utf-8")

@@ -55,7 +55,7 @@ struct arg_parse_item arg_parse_item_list[] = {
 	ARG_DEFINE("debug_option", NO_SINGLE_NAME, "debug capture option in the form {pid},{sample_freq},{dump_path}.", true),
 	ARG_DEFINE("log_print_cycles", NO_SINGLE_NAME, "print local runtime statistics every N timer cycles.", true),
 	ARG_DEFINE("bench", NO_SINGLE_NAME, "print DWARF unwind benchmark statistics in runtime stats.", false),
-	ARG_DEFINE("stack_size", NO_SINGLE_NAME, "user stack bytes copied per sample; must be 4K-aligned and within [4096, 65536]. perf copies at most 60 KiB.", true),
+	ARG_DEFINE("stack_size", NO_SINGLE_NAME, "user stack bytes copied per sample; must be 4K-aligned and within [4096, 65536]. Defaults to 8192 on bpf and to the 60 KiB perf limit on perf.", true),
 ARG_DEFINE("bpf_exec_time_guard_ms", NO_SINGLE_NAME, "abort a BPF user-stack copy after N milliseconds and throttle the offending comm; 0 disables.", true),
 ARG_DEFINE("enable_coredump_capture", NO_SINGLE_NAME, "attach do_coredump and capture the crash-time stack with signal metadata.", false),
 ARG_DEFINE("datapath", NO_SINGLE_NAME, "sample event transport: auto, ringbuf or perfbuf.", true),
@@ -510,6 +510,18 @@ int set_arg_by_name(void *ctx, const char *name, const char *value)
 	}
 
 	return -ENOENT;
+}
+
+bool cli_arg_is_set(void *ctx, const char *name)
+{
+	struct arg_ctx *pctx = ctx;
+
+	for (int i = 0; pctx && name && i < pctx->size; i++) {
+		if (strcmp(name, pctx->item_list[i].full_name) == 0)
+			return pctx->item_list[i]._accessed;
+	}
+
+	return false;
 }
 
 bool cli_arg_is_null_default(const char *arg_value)

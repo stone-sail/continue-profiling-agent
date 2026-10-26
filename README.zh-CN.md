@@ -269,7 +269,7 @@ taskset -c 0 libs/libgunwinder/bin/cfi_bench \
 - `--record_env_name, -R <LIST>`：把这些环境变量键写入 metadata，供 `cpa show` 后续过滤。
 - `--parse_env_values, -V <LIST>`：只对环境变量值匹配该列表的进程做用户态展开。
 - `--max_queue_size, -m <N>`：内存中 stack event 队列的上限。
-- `--stack_size <BYTES>`：每个样本复制的用户栈大小，必须 4K 对齐，范围 `[4096, 65536]`，默认 8192。perf 后端最多复制 60 KiB；调用栈很深的进程建议调大。
+- `--stack_size <BYTES>`：每个样本复制的用户栈大小，必须 4K 对齐，范围 `[4096, 65536]`。BPF 后端默认 8192；perf 后端默认 61440（60 KiB，即 perf 单条采样记录能容纳的上限），显式指定的值超过 60 KiB 时按 60 KiB 复制。
 - `--max_cache_size_mb <MB>`：符号和调试缓存超过该限制时重启 monitor。
 - `--max_store_size_mb <MB>`：store 目录超过该限制时重启 monitor，并清理旧目录。
 - `--log_print_cycles <N>`：每 N 个 timer 周期打印一次本地运行状态。

@@ -288,7 +288,7 @@ Shared generic options:
 - `--record_env_name, -R <LIST>`: record these env keys into metadata so `cpa show` can filter on them.
 - `--parse_env_values, -V <LIST>`: only unwind user stacks for processes whose recorded env values match this list.
 - `--max_queue_size, -m <N>`: maximum in-memory stack event queue length before backpressure.
-- `--stack_size <BYTES>`: user stack bytes copied per sample. Must be 4K-aligned and within `[4096, 65536]`. Default: 8192. The perf backend copies at most 60 KiB; raise it for processes with deep stacks.
+- `--stack_size <BYTES>`: user stack bytes copied per sample. Must be 4K-aligned and within `[4096, 65536]`. Defaults to 8192 on the BPF backend and to 61440 (60 KiB, the most a perf sample record can carry) on the perf backend; larger values are copied as 60 KiB on perf.
 - `--max_cache_size_mb <MB>`: restart monitor when symbol/debug cache usage exceeds this limit.
 - `--max_store_size_mb <MB>`: restart monitor and trim old stores when store usage exceeds this limit.
 - `--log_print_cycles <N>`: print local runtime statistics every N timer cycles.

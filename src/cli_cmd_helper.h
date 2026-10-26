@@ -89,6 +89,14 @@ const char *get_arg_by_name(void *ctx, const char *name);
 int set_arg_by_name(void *ctx, const char *name, const char *value);
 
 /**
+ * cli_arg_is_set - check whether an option was given on the command line.
+ * @ctx: command parser context.
+ * @name: option name.
+ * @return: true when the user (or set_arg_by_name) provided a value.
+ */
+bool cli_arg_is_set(void *ctx, const char *name);
+
+/**
  * cli_arg_is_null_default - check whether one CLI string is the sentinel "null".
  * @arg_value: parsed argument value.
  * @return: true when @arg_value equals "null".

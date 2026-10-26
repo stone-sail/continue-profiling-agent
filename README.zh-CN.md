@@ -194,7 +194,23 @@ END {
 }
 ```
 
-两份是先后采的，负载稳定时比值才可信；计数是按采样估算的事件次数，样本太少的函数比值波动大。只要整体比率时，直接用 `perf stat -e LLC-loads,LLC-load-misses,branches,branch-misses -p $PID -- sleep 10` 更准。
+两份是先后采的，负载稳定时比值才可信；计数是按采样估算的事件次数，样本太少的函数比值波动大。只要整体比率时，用下面的 `--perf_stat` 或 `perf stat` 更准。
+
+### 整体比率（类似 perf stat）
+
+`--perf_stat` 在采调用栈的同时按 `record_interval`（默认 1 秒）记录计数器总量。`default` 是 `cycles,instructions,branches,branch-misses,LLC-loads,LLC-load-misses`，也可以自己列事件，名字和 `--perf_event` 相同：
+
+```bash
+# 一次性：结束时打印总量、每秒速率和 IPC、未命中率、分支预测失败率
+cpa monitor --backend perf --pid $PID --perf_stat default --oneshot --duration $DUR --output_prof oncpu.prof
+
+# 常驻：每个存储目录下多一个 perf_stat 文件，之后按时间段查看
+cpa monitor --backend perf --pid $PID --perf_stat default,L1-dcache-loads,L1-dcache-load-misses --store_dir /var/log/cpa
+cpa show --read /var/log/cpa/cpa_YYMMDD --starttime 14:00:00 --endtime 14:05:00 --show_perf_stat 1
+cpa show --read /var/log/cpa/cpa_YYMMDD --starttime 14:00:00 --endtime 14:05:00 --show_perf_stat 2   # 加逐秒明细
+```
+
+`--starttime/--endtime` 和导出火焰图时含义相同，所以同一个时间段的比率和火焰图可以对照着看。事件多于 CPU 硬件计数器时内核会轮流计数，CPA 按实际计数时间折算，和 perf stat 一样；不支持的事件会打印提示后跳过。
 
 ### 锁等待
 
@@ -387,6 +403,7 @@ taskset -c 0 libs/libgunwinder/bin/cfi_bench \
 - `--perf_cgroup <auto|DIR>`：perf 后端只采样指定 perf_event cgroup 内的任务；带 `--pid` 或 `--offcpu` 时默认 `auto`：有 `--pid` 时取该进程所在的 cgroup，否则取 cpa 自身所在的 cgroup。只采 on-CPU 时，如果 cgroup 用不了，会退回整机采样。
 - `--perf_event <EVENT>`：perf 后端按这个事件采样，代替 cpu-clock，例如 `cache-misses`、`branch-misses`、`LLC-load-misses`、`dTLB-load-misses`、`page-faults`，或用 `r<hex>` 指定原始 PMU 事件。计数是估算的事件次数，`conf` 写入 `count_unit: <EVENT>`。
 - `--perf_period <N>`：和 `--perf_event` 一起用，每 N 次事件采一个样本；默认 0，表示按 `--freq` 采样。
+- `--perf_stat <EVENTS|default>`：同时按 `record_interval` 记录这些事件的计数总量（类似 perf stat），逗号分隔；存储模式写入 `<store>/perf_stat`，`--oneshot` 结束时打印汇总。
 - `--probe <SPEC>`：仅在指定 probe 触发时采集栈，采用 bpftrace 风格语法，例如 `kprobe:try_to_free_pages`。perf 后端的 kprobe 需要 kprobe PMU（4.17+），tracepoint 需要挂载 tracefs；不能和 `--offcpu` 同时使用。
 - `--disable_sym, -S`：关闭符号解析，尽量保留原始地址。
 - `--include_full_path`：在可用时保留完整文件路径。
@@ -414,6 +431,7 @@ taskset -c 0 libs/libgunwinder/bin/cfi_bench \
 - `--use_cui, -G`：打开内嵌 Rust `cpa_show` 终端界面。
 - `--use_cache, -u`：复用 `decompressed/` 下的中间文件，不重复解压。
 - `--split_path <DIR>`：把选中时间范围拆分导出为原始文件到该目录。
+- `--show_perf_stat <1|2>`：输出选中时间范围的 perf_stat 总量、每秒速率和派生比率；2 再加上逐个时间间隔的明细。
 - `--show_thread_name, -S`：在 flamegraph 中显示线程名。
 - `--no_pid, -P`：不在 metadata 标签中显示 pid 后缀。
 - `--no_env, -V`：不在 metadata 标签中显示 env 标签。

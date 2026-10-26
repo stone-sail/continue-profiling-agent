@@ -85,6 +85,7 @@ ARG_DEFINE("ring_size_mb", NO_SINGLE_NAME, "ring buffer size in MiB when datapat
 	ARG_DEFINE("target_pid", NO_SINGLE_NAME, "filter to one pid.", true),
 	ARG_DEFINE("target_env", NO_SINGLE_NAME, "filter to one recorded env value.", true),
 	ARG_DEFINE("target_state", NO_SINGLE_NAME, "filter stores collected by the perf backend with offcpu: all, on (on-CPU only) or off (off-CPU only).", true),
+	ARG_DEFINE("show_perf_stat", NO_SINGLE_NAME, "print perf_stat counters of the selected time range: 1 for totals and ratios, 2 to add one line per interval.", true),
 	ARG_DEFINE("split_path", NO_SINGLE_NAME, "export the selected time range as raw split files into this directory.", true),
 
 	/* profile */
@@ -95,6 +96,7 @@ ARG_DEFINE("ring_size_mb", NO_SINGLE_NAME, "ring buffer size in MiB when datapat
 	ARG_DEFINE("perf_cgroup", NO_SINGLE_NAME, "perf backend: scope sampling to a perf_event cgroup directory, or auto for the cgroup of --pid (cpa itself without --pid). Defaults to auto with --pid or offcpu.", true),
 	ARG_DEFINE("perf_event", NO_SINGLE_NAME, "perf backend: sample this event instead of cpu-clock, e.g. cache-misses, branch-misses, LLC-load-misses, dTLB-load-misses, page-faults, or r<hex> for a raw PMU event. Counts become estimated event counts.", true),
 	ARG_DEFINE("perf_period", NO_SINGLE_NAME, "perf backend with perf_event: sample one stack every N events; 0 samples at --freq per CPU.", true),
+	ARG_DEFINE("perf_stat", NO_SINGLE_NAME, "also count these perf events (comma separated perf list names, or default for cycles,instructions,branches,branch-misses,LLC-loads,LLC-load-misses) every record_interval, like perf stat; stores write <store>/perf_stat, oneshot prints a summary.", true),
 	ARG_DEFINE("max_queue_size", 'm', "maximum in-memory stack event queue length before backpressure.", true),
 	ARG_DEFINE("probe", NO_SINGLE_NAME, "capture stacks only when this probe fires, using bpftrace-style syntax such as 'kprobe:try_to_free_pages' or 'tracepoint:vmscan:mm_shrink_slab_start'. The perf backend needs the kprobe PMU for kprobes and a mounted tracefs for tracepoints.", true),
 

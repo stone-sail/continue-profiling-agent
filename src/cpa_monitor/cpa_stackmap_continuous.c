@@ -92,6 +92,8 @@ static void save_monitor_config(void *ctx)
 		ADD_CONFIG(perf_event);
 		ADD_CONFIG(perf_period);
 	}
+	if (!cli_arg_is_null_default(get_arg_by_name(ctx, "perf_stat")))
+		ADD_CONFIG(perf_stat);
 
 	CLI_OUTPUT("write config to %s", config->config_path);
 

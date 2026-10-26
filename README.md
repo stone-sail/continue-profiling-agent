@@ -222,9 +222,30 @@ END {
 
 The two files are recorded one after the other, so the ratio is only
 meaningful under steady load; counts are estimated from samples, so functions
-with few samples give noisy ratios. For overall ratios,
-`perf stat -e LLC-loads,LLC-load-misses,branches,branch-misses -p $PID -- sleep 10`
-is more accurate.
+with few samples give noisy ratios. For overall ratios, `--perf_stat` below
+or `perf stat` is more accurate.
+
+### Overall ratios (perf stat style)
+
+`--perf_stat` records counter totals every `record_interval` (1 s by default)
+next to the stacks. `default` is
+`cycles,instructions,branches,branch-misses,LLC-loads,LLC-load-misses`; any
+`--perf_event` names can be listed instead:
+
+```bash
+# one-shot: prints totals, per-second rates, IPC, miss and misprediction rates on exit
+cpa monitor --backend perf --pid $PID --perf_stat default --oneshot --duration $DUR --output_prof oncpu.prof
+
+# continuous: each store gets a perf_stat file, queried later by time range
+cpa monitor --backend perf --pid $PID --perf_stat default,L1-dcache-loads,L1-dcache-load-misses --store_dir /var/log/cpa
+cpa show --read /var/log/cpa/cpa_YYMMDD --starttime 14:00:00 --endtime 14:05:00 --show_perf_stat 1
+cpa show --read /var/log/cpa/cpa_YYMMDD --starttime 14:00:00 --endtime 14:05:00 --show_perf_stat 2   # one line per interval
+```
+
+`--starttime/--endtime` mean the same as for flamegraph export, so ratios and
+flamegraphs of one time range can be compared. With more events than hardware
+counters the kernel multiplexes them and CPA scales the counts by the time
+they ran, like perf stat; unsupported events are reported and skipped.
 
 ### Lock waits
 
@@ -428,6 +449,7 @@ Shared generic options:
 - `--perf_cgroup <auto|DIR>`: on the perf backend, sample only tasks in this perf_event cgroup. Defaults to `auto` with `--pid` or `--offcpu`: the cgroup of the `--pid` process, or of cpa itself without `--pid`. On-CPU-only runs fall back to host-wide sampling when the cgroup cannot be used.
 - `--perf_event <EVENT>`: on the perf backend, sample this event instead of cpu-clock, such as `cache-misses`, `branch-misses`, `LLC-load-misses`, `dTLB-load-misses`, `page-faults`, or `r<hex>` for a raw PMU event. Counts are estimated event counts and `conf` records `count_unit: <EVENT>`.
 - `--perf_period <N>`: with `--perf_event`, sample one stack every N events; the default 0 samples at `--freq`.
+- `--perf_stat <EVENTS|default>`: also count these comma-separated events every `record_interval`, like perf stat; stores write `<store>/perf_stat`, and `--oneshot` prints a summary on exit.
 - `--probe <SPEC>`: capture stacks only when a probe fires, using bpftrace-style syntax such as `kprobe:try_to_free_pages`. On the perf backend kprobes need the kprobe PMU (4.17+) and tracepoints need a mounted tracefs; cannot be combined with `--offcpu`.
 - `--disable_sym, -S`: disable symbol parsing and keep raw addresses where applicable.
 - `--include_full_path`: keep full file paths in rendered frames where available.
@@ -455,6 +477,7 @@ Shared generic options:
 - `--use_cui, -G`: open the embedded Rust `cpa_show` terminal UI.
 - `--use_cache, -u`: reuse files under `decompressed/` instead of re-decompressing them.
 - `--split_path <DIR>`: export the selected time range as raw split files into this directory.
+- `--show_perf_stat <1|2>`: print perf_stat totals, per-second rates and derived ratios for the selected time range; 2 adds one line per interval.
 - `--show_thread_name, -S`: include thread names in flamegraph output.
 - `--no_pid, -P`: omit pid suffixes from metadata labels.
 - `--no_env, -V`: omit env labels from metadata labels.

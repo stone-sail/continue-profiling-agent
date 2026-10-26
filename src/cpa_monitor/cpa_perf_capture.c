@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 ByteDance
 
-/* name_to_handle_at() */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -20,6 +19,7 @@
 #include "uthash.h"
 #include <asm/ptrace.h>
 #include "cpa_nobpf_unwinder_event.h"
+#include "cpa_perf_event.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -363,107 +363,6 @@ static void perf_switch_handler(const struct perf_switch_event *event, void *dat
 	t->early_in_ts = 0;
 }
 
-/*
- * Resolve the perf_event cgroup directory to scope events to. "auto" maps
- * the cgroup of the target pid (cpa itself when pid is 0) through the cgroup
- * mount, which inside a container is usually the container cgroup
- * bind-mounted as the root.
- */
-static int perf_cgroup_resolve_auto(int pid, char *dir, size_t dir_sz)
-{
-	char line[4096], cg_path[PATH_MAX] = { 0 }, cg_file[64];
-	char mnt_root[PATH_MAX] = { 0 }, mnt_point[PATH_MAX] = { 0 };
-	bool v1 = false;
-	FILE *fp;
-
-	fp = fopen("/proc/self/mountinfo", "r");
-	if (!fp)
-		return -errno;
-	while (fgets(line, sizeof(line), fp)) {
-		char root[PATH_MAX], point[PATH_MAX], fstype[64], super_opts[1024];
-		char *sep = strstr(line, " - ");
-
-		if (!sep || sscanf(line, "%*s %*s %*s %4095s %4095s", root, point) != 2)
-			continue;
-		if (sscanf(sep + 3, "%63s %*s %1023s", fstype, super_opts) != 2)
-			continue;
-		if (strcmp(fstype, "cgroup") == 0 && strstr(super_opts, "perf_event")) {
-			snprintf(mnt_root, sizeof(mnt_root), "%s", root);
-			snprintf(mnt_point, sizeof(mnt_point), "%s", point);
-			v1 = true;
-			break;
-		}
-		if (strcmp(fstype, "cgroup2") == 0 && !mnt_point[0]) {
-			snprintf(mnt_root, sizeof(mnt_root), "%s", root);
-			snprintf(mnt_point, sizeof(mnt_point), "%s", point);
-		}
-	}
-	fclose(fp);
-	if (!mnt_point[0])
-		return -ENOENT;
-
-	if (pid > 0)
-		snprintf(cg_file, sizeof(cg_file), "/proc/%d/cgroup", pid);
-	else
-		snprintf(cg_file, sizeof(cg_file), "/proc/self/cgroup");
-	fp = fopen(cg_file, "r");
-	if (!fp)
-		return -errno;
-	while (fgets(line, sizeof(line), fp)) {
-		char *controllers = strchr(line, ':');
-		char *path = controllers ? strchr(controllers + 1, ':') : NULL;
-
-		if (!path)
-			continue;
-		*path++ = '\0';
-		controllers++;
-		if ((v1 && strstr(controllers, "perf_event")) || (!v1 && controllers[0] == '\0')) {
-			path[strcspn(path, "\n")] = '\0';
-			snprintf(cg_path, sizeof(cg_path), "%s", path);
-			break;
-		}
-	}
-	fclose(fp);
-	if (!cg_path[0])
-		return -ENOENT;
-
-	const char *rel = cg_path;
-	size_t root_len = strlen(mnt_root);
-	if (strcmp(mnt_root, "/") != 0 && strncmp(cg_path, mnt_root, root_len) == 0)
-		rel = cg_path + root_len;
-	if (strcmp(rel, "/") == 0)
-		rel = "";
-
-	snprintf(dir, dir_sz, "%s%s", mnt_point, rel);
-	return 0;
-}
-
-static int perf_cgroup_open(const char *spec, int pid)
-{
-	char dir[PATH_MAX];
-	int fd;
-
-	if (strcmp(spec, "auto") == 0) {
-		int ret = perf_cgroup_resolve_auto(pid, dir, sizeof(dir));
-
-		if (ret) {
-			CLI_ERROR("Failed to resolve perf_event cgroup of %s: %s", pid > 0 ? "pid" : "cpa", strerror(-ret));
-			return -1;
-		}
-	} else {
-		snprintf(dir, sizeof(dir), "%s", spec);
-	}
-
-	fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-	if (fd < 0) {
-		CLI_ERROR("Failed to open perf_event cgroup %s: %s", dir, strerror(errno));
-		return -1;
-	}
-	CLI_OUTPUT("perf backend scoped to cgroup %s", dir);
-
-	return fd;
-}
-
 static int perf_read_sysfs_line(const char *path, char *buf, size_t buf_sz)
 {
 	FILE *fp = fopen(path, "r");
@@ -552,136 +451,7 @@ static int perf_probe_resolve(const char *spec)
 	return -EINVAL;
 }
 
-struct perf_event_name {
-	const char *name;
-	unsigned int type;
-	unsigned long long config;
-};
 
-static const struct perf_event_name perf_event_names[] = {
-	{ "cpu-clock", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_CLOCK },
-	{ "task-clock", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_TASK_CLOCK },
-	{ "page-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS },
-	{ "faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS },
-	{ "minor-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS_MIN },
-	{ "major-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS_MAJ },
-	{ "context-switches", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CONTEXT_SWITCHES },
-	{ "cs", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CONTEXT_SWITCHES },
-	{ "cpu-migrations", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_MIGRATIONS },
-	{ "migrations", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_MIGRATIONS },
-	{ "alignment-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_ALIGNMENT_FAULTS },
-	{ "emulation-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_EMULATION_FAULTS },
-	{ "cycles", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES },
-	{ "cpu-cycles", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES },
-	{ "instructions", PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS },
-	{ "cache-references", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CACHE_REFERENCES },
-	{ "cache-misses", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CACHE_MISSES },
-	{ "branches", PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS },
-	{ "branch-instructions", PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS },
-	{ "branch-misses", PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES },
-	{ "bus-cycles", PERF_TYPE_HARDWARE, PERF_COUNT_HW_BUS_CYCLES },
-	{ "stalled-cycles-frontend", PERF_TYPE_HARDWARE, PERF_COUNT_HW_STALLED_CYCLES_FRONTEND },
-	{ "stalled-cycles-backend", PERF_TYPE_HARDWARE, PERF_COUNT_HW_STALLED_CYCLES_BACKEND },
-	{ "ref-cycles", PERF_TYPE_HARDWARE, PERF_COUNT_HW_REF_CPU_CYCLES },
-};
-
-static const struct perf_event_name perf_cache_names[] = {
-	{ "L1-dcache", 0, PERF_COUNT_HW_CACHE_L1D }, { "L1-icache", 0, PERF_COUNT_HW_CACHE_L1I }, { "LLC", 0, PERF_COUNT_HW_CACHE_LL },
-	{ "dTLB", 0, PERF_COUNT_HW_CACHE_DTLB },     { "iTLB", 0, PERF_COUNT_HW_CACHE_ITLB },     { "branch", 0, PERF_COUNT_HW_CACHE_BPU },
-	{ "node", 0, PERF_COUNT_HW_CACHE_NODE },
-};
-
-static const struct perf_event_name perf_cache_ops[] = {
-	{ "loads", 0, PERF_COUNT_HW_CACHE_OP_READ },
-	{ "stores", 0, PERF_COUNT_HW_CACHE_OP_WRITE },
-	{ "prefetches", 0, PERF_COUNT_HW_CACHE_OP_PREFETCH },
-};
-
-/* perf's cache event names: <cache>-<loads|stores|prefetches>[-misses]. */
-static bool perf_event_resolve_cache(const char *spec, unsigned long long *config)
-{
-	for (size_t i = 0; i < sizeof(perf_cache_names) / sizeof(perf_cache_names[0]); i++) {
-		size_t len = strlen(perf_cache_names[i].name);
-
-		if (strncmp(spec, perf_cache_names[i].name, len) != 0 || spec[len] != '-')
-			continue;
-		for (size_t j = 0; j < sizeof(perf_cache_ops) / sizeof(perf_cache_ops[0]); j++) {
-			const char *op = spec + len + 1;
-			size_t op_len = strlen(perf_cache_ops[j].name);
-			unsigned long long result;
-
-			if (strncmp(op, perf_cache_ops[j].name, op_len) != 0)
-				continue;
-			if (op[op_len] == '\0')
-				result = PERF_COUNT_HW_CACHE_RESULT_ACCESS;
-			else if (strcmp(op + op_len, "-misses") == 0)
-				result = PERF_COUNT_HW_CACHE_RESULT_MISS;
-			else
-				continue;
-			*config = perf_cache_names[i].config | (perf_cache_ops[j].config << 8) | (result << 16);
-			return true;
-		}
-	}
-
-	return false;
-}
-
-/* Same names as perf list, plus r<hex> for raw PMU events. */
-static int perf_event_resolve(const char *spec)
-{
-	perf_capture_config.custom_event = false;
-
-	for (size_t i = 0; i < sizeof(perf_event_names) / sizeof(perf_event_names[0]); i++) {
-		if (strcmp(spec, perf_event_names[i].name) == 0) {
-			perf_capture_config.event_type = perf_event_names[i].type;
-			perf_capture_config.event_config = perf_event_names[i].config;
-			/* cpu-clock is the default on-CPU sampling, counted in samples. */
-			perf_capture_config.custom_event = !(perf_event_names[i].type == PERF_TYPE_SOFTWARE && perf_event_names[i].config == PERF_COUNT_SW_CPU_CLOCK);
-			return 0;
-		}
-	}
-
-	if (perf_event_resolve_cache(spec, &perf_capture_config.event_config)) {
-		perf_capture_config.event_type = PERF_TYPE_HW_CACHE;
-		perf_capture_config.custom_event = true;
-		return 0;
-	}
-
-	if (spec[0] == 'r' && spec[1]) {
-		char *end = NULL;
-
-		errno = 0;
-		perf_capture_config.event_config = strtoull(spec + 1, &end, 16);
-		if (errno == 0 && end && *end == '\0') {
-			perf_capture_config.event_type = PERF_TYPE_RAW;
-			perf_capture_config.custom_event = true;
-			return 0;
-		}
-	}
-
-	CLI_ERROR("Unknown perf event %s; use a perf list name such as cache-misses, branch-misses, LLC-load-misses, or r<hex> for a raw event", spec);
-	return -EINVAL;
-}
-
-/* The kernfs file handle of a cgroup directory is its cgroup id. */
-static unsigned long perf_cgroup_id(int cgroup_fd)
-{
-	struct file_handle *handle = calloc(1, sizeof(*handle) + sizeof(unsigned long));
-	unsigned long id = 0;
-	int mount_id;
-
-	if (!handle)
-		return 0;
-
-	handle->handle_bytes = sizeof(unsigned long);
-	if (name_to_handle_at(cgroup_fd, "", handle, &mount_id, AT_EMPTY_PATH) == 0)
-		memcpy(&id, handle->f_handle, sizeof(id));
-	else
-		CLI_ERROR("Failed to read perf_event cgroup id: %s", strerror(errno));
-
-	free(handle);
-	return id;
-}
 
 void perf_capture_handler(struct perf_stack_event *event, void *data)
 {
@@ -736,8 +506,16 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 			CLI_ERROR("--perf_event cannot be combined with --probe or --offcpu");
 			return CPA_INIT_FAILED;
 		}
-		if (perf_event_resolve(perf_event) < 0)
+		struct cpa_perf_event ev;
+
+		if (cpa_perf_event_parse(perf_event, &ev) < 0) {
+			CLI_ERROR("Unknown perf event %s; use a perf list name such as cache-misses, branch-misses, LLC-load-misses, or r<hex> for a raw event", perf_event);
 			return CPA_INIT_FAILED;
+		}
+		perf_capture_config.event_type = ev.type;
+		perf_capture_config.event_config = ev.config;
+		/* cpu-clock is the default on-CPU sampling, counted in samples. */
+		perf_capture_config.custom_event = !cpa_perf_event_is_cpu_clock(&ev);
 	}
 	long perf_period = atol(get_arg_by_name(ctx, "perf_period"));
 	if (perf_period < 0) {
@@ -817,9 +595,9 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 	}
 	perf_capture_config.cgid = 0;
 	if (cgroup_spec) {
-		perf_capture_config.cgroup_fd = perf_cgroup_open(cgroup_spec, pid);
+		perf_capture_config.cgroup_fd = cpa_perf_cgroup_open(cgroup_spec, pid);
 		if (perf_capture_config.cgroup_fd >= 0)
-			perf_capture_config.cgid = perf_cgroup_id(perf_capture_config.cgroup_fd);
+			perf_capture_config.cgid = cpa_perf_cgroup_id(perf_capture_config.cgroup_fd);
 		else if (cgroup_optional)
 			CLI_OUTPUT("perf backend falls back to host-wide sampling");
 		else

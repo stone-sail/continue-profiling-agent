@@ -412,6 +412,61 @@ def test_cpa_monitor_perf_event_writes_event_unit(tmp_path, extra_args):
     assert "perf_event: page-faults" in conf
 
 
+def test_cpa_monitor_perf_stat_store_and_show(tmp_path):
+    # software events, so the test runs without a hardware PMU
+    stdout, stderr, return_code = run_command(
+        [
+            "monitor",
+            "--backend=perf",
+            "--perf_stat=page-faults,context-switches",
+            "--duration=3",
+            "--store_dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert return_code == 0, f"{stdout}{stderr}"
+    stores = list(tmp_path.glob("cpa_*"))
+    assert stores
+    lines = (stores[0] / "perf_stat").read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "# record_ms page-faults context-switches"
+    assert len(lines) > 1
+    assert len(lines[1].split()) == 3
+    assert "perf_stat: page-faults,context-switches" in (stores[0] / "conf").read_text(encoding="utf-8")
+
+    stdout, stderr, return_code = run_command(["show", "--read", str(stores[0]), "--show_perf_stat=2"])
+    output = f"{stdout}{stderr}"
+    assert return_code == 0, output
+    assert "perf_stat over" in output
+    assert "context-switches=" in output
+
+
+def test_cpa_monitor_perf_stat_oneshot_prints_summary(tmp_path):
+    stdout, stderr, return_code = run_command(
+        [
+            "monitor",
+            "--backend=perf",
+            "--perf_stat=page-faults",
+            "--oneshot",
+            "--duration=2",
+            "--output_prof",
+            str(tmp_path / "cpa.prof"),
+        ]
+    )
+
+    assert return_code == 0, f"{stdout}{stderr}"
+    assert "perf_stat over" in f"{stdout}{stderr}"
+
+
+def test_cpa_monitor_rejects_unknown_perf_stat_event(tmp_path):
+    stdout, stderr, return_code = run_command(
+        ["monitor", "--backend=perf", "--perf_stat=no-such-event", "--duration=1", "--store_dir", str(tmp_path)]
+    )
+
+    assert return_code != 0
+    assert "unknown perf_stat event" in f"{stdout}{stderr}".lower()
+
+
 @pytest.mark.parametrize(
     "extra_args, message",
     [

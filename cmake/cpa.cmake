@@ -67,6 +67,8 @@ set(CPA_MONITOR_SOURCES
     "${CPA_SRC_DIR}/cpa_monitor/cpa_runtime.c"
     "${CPA_SRC_DIR}/cpa_monitor/cpa_bpf_capture.c"
     "${CPA_SRC_DIR}/cpa_monitor/cpa_perf_capture.c"
+    "${CPA_SRC_DIR}/cpa_monitor/cpa_perf_event.c"
+    "${CPA_SRC_DIR}/cpa_monitor/cpa_perf_stat.c"
     "${CPA_SRC_DIR}/cpa_monitor/cpa_unwinder.c"
     "${CPA_SRC_DIR}/cpa_monitor/cpa_env.c"
     "${CPA_SRC_DIR}/cpa_monitor/cpa_nobpf_unwinder_event.c"
@@ -80,6 +82,7 @@ set(CPA_MONITOR_SOURCES
 set(CPA_WORKER_C_FILES
     "${CPA_SRC_DIR}/cpa_monitor/cpa_bpf_capture.c"
     "${CPA_SRC_DIR}/cpa_monitor/cpa_perf_capture.c"
+    "${CPA_SRC_DIR}/cpa_monitor/cpa_perf_stat.c"
     "${CPA_SRC_DIR}/cpa_monitor/cpa_unwinder.c"
     "${CPA_SRC_DIR}/cpa_monitor/cpa_env.c"
     "${CPA_SRC_DIR}/cpa_monitor/cpa_nobpf_unwinder_event.c"

@@ -125,6 +125,25 @@ sudo ./build/bin/cpa monitor \
 - Cannot be combined with `--probe` or `--offcpu`. Hardware events need PMU
   access, which some containers do not have.
 
+Counter totals, like perf stat:
+
+```bash
+sudo ./build/bin/cpa monitor --pid 12345 --backend perf --perf_stat default --store_dir /var/log/cpa
+```
+
+- Each event is a counting (non-sampling) event on every CPU, scoped like
+  sampling (the `--pid` cgroup, or `--perf_cgroup`). Deltas are read every
+  `record_interval` into `perf_stat` in the store: a `# record_ms <event>...`
+  header, then `<record_ms> <count>...` lines; `record_ms` uses the
+  `stack.bin` clock.
+- `default` is `cycles,instructions,branches,branch-misses,LLC-loads,LLC-load-misses`;
+  at most 16 events; unsupported events are reported and skipped.
+- Multiplexed events are scaled by `time_enabled / time_running`.
+- With `--oneshot` nothing is written; totals, per-second rates and ratios are
+  printed on exit.
+- Also works with the BPF backend; a host `--pid` that has no cgroup visible to
+  cpa falls back to host-wide counting.
+
 ## `cpa show`
 
 `cpa show` reads a stored profile directory.
@@ -176,6 +195,7 @@ Other useful options:
 - `--output_num <n>`: export `n` records from the selected time point; use a
   positive integer
 - `--split_path <dir>`: export the selected range as split raw files
+- `--show_perf_stat 1|2`: print perf_stat totals, per-second rates, IPC and miss rates for the selected range; 2 also prints every interval
 
 Launch the embedded Rust TUI:
 

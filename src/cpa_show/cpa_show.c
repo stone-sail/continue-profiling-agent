@@ -6,6 +6,7 @@
 #include "cli_common.h"
 #include "cli_profile_metadata.h"
 #include "cli_stackmap.h"
+#include "cpa_perf_event.h"
 
 #include <libiberty/demangle.h>
 #include <sys/stat.h>
@@ -21,7 +22,7 @@ enum {
 	META_SHOW_FLAG_NO_ENV = 1 << 2,
 };
 
-#define CPA_SHOW_CMDLINE "read starttime=00:00:00 endtime=00:00:00 output_num=1 output_prof=null show_range=0 use_cui=0 use_cache=0 split_path=null show_thread_name=0 no_pid=0 no_env=0 show_raw=0 "
+#define CPA_SHOW_CMDLINE "read starttime=00:00:00 endtime=00:00:00 output_num=1 output_prof=null show_range=0 use_cui=0 use_cache=0 show_perf_stat=0 split_path=null show_thread_name=0 no_pid=0 no_env=0 show_raw=0 "
 
 static const char *target_cpu;
 static const char *target_comm;
@@ -168,6 +169,111 @@ static bool cpa_show_state_filtered(struct cli_stackmap_record_map *map, struct 
 	return strcmp(target_state, "off") == 0 ? !offcpu : offcpu;
 }
 
+#define CPA_SHOW_PERF_STAT_MAX 16
+
+static unsigned int cpa_show_record_interval(const char *read_dir)
+{
+	char *path = path_join(read_dir, "conf");
+	char line[256];
+	unsigned int interval = 1;
+	FILE *fp;
+
+	if (!path)
+		return interval;
+	fp = fopen(path, "r");
+	free(path);
+	if (!fp)
+		return interval;
+	while (fgets(line, sizeof(line), fp)) {
+		if (sscanf(line, "record_interval: %u", &interval) == 1)
+			break;
+	}
+	fclose(fp);
+	return interval ? interval : 1;
+}
+
+/*
+ * Sum <read>/perf_stat lines whose record_ms falls in [start, end] (end 0 means
+ * open ended) and print totals and ratios; level 2 also prints each line.
+ */
+static int cpa_show_perf_stat(const char *read_dir, uint64_t start, uint64_t end, int level)
+{
+	char *names[CPA_SHOW_PERF_STAT_MAX] = { 0 };
+	double totals[CPA_SHOW_PERF_STAT_MAX] = { 0 };
+	unsigned int interval_ms = cpa_show_record_interval(read_dir) * 1000;
+	uint64_t first_ms = 0, last_ms = 0;
+	char *path = path_join(read_dir, "perf_stat");
+	char line[4096];
+	int n = 0, rows = 0, ret = -1;
+	FILE *fp;
+
+	if (!path)
+		return -1;
+	fp = fopen(path, "r");
+	if (!fp) {
+		CLI_ERROR("No perf_stat in %s; record it with cpa monitor --perf_stat", read_dir);
+		free(path);
+		return -1;
+	}
+
+	while (fgets(line, sizeof(line), fp)) {
+		char *saveptr = NULL;
+		char *tok = strtok_r(line, " \n", &saveptr);
+		double row[CPA_SHOW_PERF_STAT_MAX];
+		uint64_t record_ms;
+
+		if (!tok)
+			continue;
+		if (strcmp(tok, "#") == 0) {
+			if (n)
+				continue;
+			strtok_r(NULL, " \n", &saveptr); /* record_ms */
+			while ((tok = strtok_r(NULL, " \n", &saveptr)) && n < CPA_SHOW_PERF_STAT_MAX)
+				names[n++] = strdup(tok);
+			continue;
+		}
+
+		record_ms = strtoull(tok, NULL, 10);
+		if (record_ms < start || (end && record_ms > end))
+			continue;
+		for (int i = 0; i < n; i++) {
+			tok = strtok_r(NULL, " \n", &saveptr);
+			row[i] = tok ? strtod(tok, NULL) : 0;
+			totals[i] += row[i];
+		}
+		if (!rows)
+			first_ms = record_ms;
+		last_ms = record_ms;
+		rows++;
+
+		if (level >= 2) {
+			CLI_OUTPUT_NO_END("%s", convert_millisecond_to_time(record_ms));
+			for (int i = 0; i < n; i++)
+				CLI_OUTPUT_NO_END("  %s=%.0f", names[i], row[i]);
+			CLI_OUTPUT("%s", "");
+		}
+	}
+
+	if (!n) {
+		CLI_ERROR("perf_stat in %s has no header", read_dir);
+	} else if (!rows) {
+		CLI_OUTPUT("No perf_stat lines in the selected time range");
+		ret = 0;
+	} else {
+		/* Each line covers the interval that ends at its record_ms. */
+		CLI_OUTPUT_NO_END("perf_stat [ %s -", convert_millisecond_to_time(first_ms > interval_ms ? first_ms - interval_ms : 0));
+		CLI_OUTPUT(" %s ], %d intervals", convert_millisecond_to_time(last_ms), rows);
+		cpa_perf_stat_print((const char *const *)names, totals, n, (last_ms - first_ms + interval_ms) / 1000.0);
+		ret = 0;
+	}
+
+	for (int i = 0; i < n; i++)
+		free(names[i]);
+	fclose(fp);
+	free(path);
+	return ret;
+}
+
 static int cpa_show_render(void *ctx)
 {
 	const char *read_file = get_arg_by_name(ctx, "read");
@@ -219,6 +325,9 @@ static int cpa_show_render(void *ctx)
 	}
 	starttime_set *= 1000;
 	endtime_set *= 1000;
+
+	if (atoi(get_arg_by_name(ctx, "show_perf_stat")))
+		return cpa_show_perf_stat(read_file, starttime_set, endtime_set, atoi(get_arg_by_name(ctx, "show_perf_stat")));
 
 	if (output_num <= 0) {
 		CLI_ERROR("output_num should be greater than 0");

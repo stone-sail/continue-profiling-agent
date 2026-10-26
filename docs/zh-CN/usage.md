@@ -100,6 +100,18 @@ sudo ./build/bin/cpa monitor \
 - 只给出未命中、预测失败发生在哪里，不给出命中率。命中率可以再用 `--perf_event LLC-loads`、`branches` 采一份做分母，或者直接用 `perf stat`。
 - 不能和 `--probe`、`--offcpu` 一起使用。容器里要能访问硬件 PMU，否则打开事件会失败。
 
+计数器总量（类似 perf stat）：
+
+```bash
+sudo ./build/bin/cpa monitor --pid 12345 --backend perf --perf_stat default --store_dir /var/log/cpa
+```
+
+- 每个 CPU 开只计数、不采样的事件，范围和采样相同（`--pid` 所在的 cgroup，或 `--perf_cgroup`）。每 `record_interval` 读一次增量，写入存储目录下的 `perf_stat` 文件：首行 `# record_ms <事件>...`，之后每行 `<record_ms> <计数>...`，`record_ms` 和 `stack.bin` 用同一个时钟。
+- `default` 是 `cycles,instructions,branches,branch-misses,LLC-loads,LLC-load-misses`，最多 16 个事件；不支持的事件打印提示后跳过。
+- 事件多于硬件计数器时按 `time_enabled / time_running` 折算。
+- `--oneshot` 时不写文件，结束时打印总量、每秒速率和派生比率。
+- BPF 后端也可以用；`--pid` 是宿主机 PID 时找不到对应 cgroup，会退回整机计数。
+
 ## `cpa show`
 
 `cpa show` 用于读取 `cpa monitor` 生成的 profile 目录。
@@ -149,6 +161,7 @@ sudo ./build/bin/cpa monitor \
 - `--show_raw 1`：输出原始 metadata
 - `--output_num <n>`：从选中时间点向后导出 `n` 个 record，建议使用正整数
 - `--split_path <dir>`：将选中时间范围拆分导出为原始文件
+- `--show_perf_stat 1|2`：输出选中时间范围的 perf_stat 总量、每秒速率、IPC 和各项未命中率；2 再逐行输出每个时间间隔
 
 打开内嵌 Rust TUI：
 

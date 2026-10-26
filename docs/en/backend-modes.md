@@ -98,8 +98,9 @@ only, through a different mechanism (perf pairs context switch records, BPF
 probes `finish_task_switch`). BPF requests with `--offcpu` therefore never fall
 back to perf. `--oncpu --offcpu` is only supported on the perf backend.
 
-`--backend=perf --pid <PID>` is accepted: the perf backend filters by pid/tid
-in userspace. The two backends use different pid namespaces: BPF matches pids
+`--backend=perf --pid <PID>` is accepted: the kernel scopes sampling to the
+perf_event cgroup of that process (override with `--perf_cgroup`), and the
+perf backend then filters by pid/tid in userspace. The two backends use different pid namespaces: BPF matches pids
 in the root (host) pid namespace, while perf matches pids in the pid namespace
 of the cpa process. When running cpa inside a container, use
 `--backend=perf --pid <in-container pid>`.
@@ -188,7 +189,7 @@ BPF capability check failed: <reason>. Requested mode requires BPF backend and c
 Use BPF explicitly when you need:
 
 - kprobe-based off-CPU
-- in-kernel pid/comm filtering (perf filters in userspace)
+- in-kernel pid/comm filtering (perf filters by cgroup in the kernel at most, and by pid/comm in userspace)
 - IRQOFF records
 
 ### When automatic fallback is acceptable

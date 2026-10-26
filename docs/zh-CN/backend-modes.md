@@ -80,7 +80,7 @@ BPF 路径会用到：
 
 `--backend=perf --offcpu` 是允许的，和 BPF 后端一样只采 off-CPU，但实现不同（perf 配对上下文切换记录，BPF 挂 `finish_task_switch`）。因此带 `--offcpu` 的 BPF 请求不会自动回退到 perf。`--oncpu --offcpu` 只有 perf 后端支持。
 
-`--backend=perf --pid <PID>` 是允许的：perf 后端在用户态按 pid/tid 过滤。
+`--backend=perf --pid <PID>` 是允许的：内核里先按该进程所在的 perf_event cgroup 限定采样范围（可以用 `--perf_cgroup` 改），再在用户态按 pid/tid 过滤。
 注意两条后端的 pid 语义不同：BPF 匹配根 PID 命名空间（宿主机）的 pid，
 perf 匹配 cpa 进程所在 PID 命名空间里的 pid。因此在容器内运行 cpa 时，
 应使用 `--backend=perf --pid <容器内 PID>`。
@@ -163,7 +163,7 @@ BPF capability check failed: <reason>. Requested mode requires BPF backend and c
 ### 什么时候建议显式写 `--backend=bpf`
 
 - 你依赖 kprobe 方式的 off-CPU
-- 你需要在内核里按 pid/comm 过滤（perf 在用户态过滤）
+- 你需要在内核里按 pid/comm 过滤（perf 在内核里最多只能按 cgroup 过滤，pid/comm 在用户态过滤）
 - 你关心 IRQOFF 记录
 
 ### 什么时候可以接受自动回退

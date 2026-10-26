@@ -93,8 +93,9 @@ sudo ./build/bin/cpa monitor \
   wall-clock time of all threads.
 - Off-CPU stacks carry a `<# OFFCPU SAMPLE: (R|S) #>` frame after the metadata:
   `R` means preempted, `S` means the thread gave up the CPU.
-- Sampling is scoped to the perf_event cgroup of cpa (`--perf_cgroup auto`) by
-  default; a cgroup directory can be passed instead.
+- Sampling is scoped to a perf_event cgroup (`--perf_cgroup auto`) by default:
+  the cgroup of the `--pid` process, or of cpa itself without `--pid`; a cgroup
+  directory can be passed instead.
 
 ## `cpa show`
 

@@ -360,12 +360,13 @@ static void perf_switch_handler(const struct perf_switch_event *event, void *dat
 
 /*
  * Resolve the perf_event cgroup directory to scope events to. "auto" maps
- * the cgroup of cpa itself through the cgroup mount, which inside a
- * container is usually the container cgroup bind-mounted as the root.
+ * the cgroup of the target pid (cpa itself when pid is 0) through the cgroup
+ * mount, which inside a container is usually the container cgroup
+ * bind-mounted as the root.
  */
-static int perf_cgroup_resolve_auto(char *dir, size_t dir_sz)
+static int perf_cgroup_resolve_auto(int pid, char *dir, size_t dir_sz)
 {
-	char line[4096], cg_path[PATH_MAX] = { 0 };
+	char line[4096], cg_path[PATH_MAX] = { 0 }, cg_file[64];
 	char mnt_root[PATH_MAX] = { 0 }, mnt_point[PATH_MAX] = { 0 };
 	bool v1 = false;
 	FILE *fp;
@@ -396,7 +397,11 @@ static int perf_cgroup_resolve_auto(char *dir, size_t dir_sz)
 	if (!mnt_point[0])
 		return -ENOENT;
 
-	fp = fopen("/proc/self/cgroup", "r");
+	if (pid > 0)
+		snprintf(cg_file, sizeof(cg_file), "/proc/%d/cgroup", pid);
+	else
+		snprintf(cg_file, sizeof(cg_file), "/proc/self/cgroup");
+	fp = fopen(cg_file, "r");
 	if (!fp)
 		return -errno;
 	while (fgets(line, sizeof(line), fp)) {
@@ -428,16 +433,16 @@ static int perf_cgroup_resolve_auto(char *dir, size_t dir_sz)
 	return 0;
 }
 
-static int perf_cgroup_open(const char *spec)
+static int perf_cgroup_open(const char *spec, int pid)
 {
 	char dir[PATH_MAX];
 	int fd;
 
 	if (strcmp(spec, "auto") == 0) {
-		int ret = perf_cgroup_resolve_auto(dir, sizeof(dir));
+		int ret = perf_cgroup_resolve_auto(pid, dir, sizeof(dir));
 
 		if (ret) {
-			CLI_ERROR("Failed to resolve perf_event cgroup of cpa: %s", strerror(-ret));
+			CLI_ERROR("Failed to resolve perf_event cgroup of %s: %s", pid > 0 ? "pid" : "cpa", strerror(-ret));
 			return -1;
 		}
 	} else {
@@ -657,10 +662,17 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 	/* Off-CPU stores count microseconds so on- and off-CPU weights add up. */
 	perf_capture_config.oncpu_count = offcpu ? 1000000UL / perf_capture_config.freq : 1;
 
-	/* Off-CPU needs cgroup scoping: host-wide switch records are too many. */
+	/*
+	 * Off-CPU needs cgroup scoping: host-wide switch records are too many.
+	 * With --pid, scoping to the target's cgroup keeps the kernel from
+	 * sampling (and copying stacks of) tasks we would drop anyway; on-CPU
+	 * falls back to host-wide sampling if that cgroup cannot be used.
+	 */
 	const char *cgroup_spec = get_arg_by_name(ctx, "perf_cgroup");
-	if (cli_arg_is_null_default(cgroup_spec))
-		cgroup_spec = offcpu ? "auto" : NULL;
+	bool cgroup_implicit = cli_arg_is_null_default(cgroup_spec);
+	if (cgroup_implicit)
+		cgroup_spec = (offcpu || pid > 0) ? "auto" : NULL;
+	bool cgroup_optional = cgroup_implicit && !offcpu;
 
 	if (perf_capture_config.cgroup_fd >= 0) {
 		close(perf_capture_config.cgroup_fd);
@@ -668,10 +680,13 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 	}
 	perf_capture_config.cgid = 0;
 	if (cgroup_spec) {
-		perf_capture_config.cgroup_fd = perf_cgroup_open(cgroup_spec);
-		if (perf_capture_config.cgroup_fd < 0)
+		perf_capture_config.cgroup_fd = perf_cgroup_open(cgroup_spec, pid);
+		if (perf_capture_config.cgroup_fd >= 0)
+			perf_capture_config.cgid = perf_cgroup_id(perf_capture_config.cgroup_fd);
+		else if (cgroup_optional)
+			CLI_OUTPUT("perf backend falls back to host-wide sampling");
+		else
 			return CPA_INIT_FAILED;
-		perf_capture_config.cgid = perf_cgroup_id(perf_capture_config.cgroup_fd);
 	}
 
 	if (perf_ctx) {
@@ -697,6 +712,14 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 	};
 
 	perf_ctx = perf_setup_stack_capture(&opts);
+	if (!perf_ctx && cgroup_optional && perf_capture_config.cgroup_fd >= 0) {
+		CLI_OUTPUT("perf backend falls back to host-wide sampling");
+		close(perf_capture_config.cgroup_fd);
+		perf_capture_config.cgroup_fd = -1;
+		perf_capture_config.cgid = 0;
+		opts.cgroup_fd = -1;
+		perf_ctx = perf_setup_stack_capture(&opts);
+	}
 	if (!perf_ctx) {
 		CLI_ERROR("Failed to setup stack capture event");
 		return CPA_INIT_FAILED;

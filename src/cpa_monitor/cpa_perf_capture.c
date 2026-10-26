@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 ByteDance
 
+/* name_to_handle_at() */
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "gunwinder/unwinder.h"
 #include "cpa_runtime.h"
 #include "cpa_capture_stats.h"
@@ -36,6 +41,11 @@ struct perf_capture_config {
 	unsigned int offcpu_period;
 	unsigned int offcpu_stack_size;
 	int cgroup_fd;
+	/* id of the scoped cgroup, reported as the cgroup of every sample */
+	unsigned long cgid;
+	bool kernel_only;
+	/* thread comm to keep, truncated like the kernel comm; empty keeps all */
+	char comm[TASK_COMM_LEN];
 };
 
 enum cpa_capture_state { STACK_PROCESS_STATE_INIT = 0, STACK_PROCESS_STATE_PAUSE, STACK_PROCESS_STATE_RUNNING, STACK_PROCESS_STATE_EXIT };
@@ -54,13 +64,15 @@ static struct stack_sample *perf_stack_sample_build(struct perf_stack_event *eve
 	}
 
 	sample->timestamp = event->time;
-	sample->cgid = event->cgid;
+	sample->cgid = perf_capture_config.cgid ? perf_capture_config.cgid : event->cgid;
 	sample->cpu = event->cpu;
 	sample->type = 0;
 	sample->user_mode = true;
 	sample->pid = event->pid;
 	sample->stack_count = perf_capture_config.oncpu_count;
 	sample->state = 0;
+	if (perf_capture_config.kernel_only)
+		sample->type |= STACK_EVENT_KERNEL_ONLY;
 
 	memset(sample->group_comm, 0, sizeof(sample->group_comm));
 	memset(sample->comm, 0, sizeof(sample->comm));
@@ -118,9 +130,70 @@ static struct stack_sample *perf_stack_sample_build(struct perf_stack_event *eve
 	return sample;
 }
 
+/*
+ * Comm match results per thread. Switch records arrive far too often to read
+ * /proc/<tid>/comm each time, so results are cached and rechecked
+ * periodically because threads may rename themselves.
+ */
+struct comm_match_entry {
+	unsigned int tid;
+	bool matched;
+	uint64_t checked_ts;
+	UT_hash_handle hh;
+};
+
+#define COMM_MATCH_RECHECK_NS (10ULL * 1000 * 1000 * 1000)
+#define COMM_MATCH_CACHE_MAX 65536
+
+static struct comm_match_entry *comm_match_cache;
+
+static void comm_match_cache_destroy(void)
+{
+	struct comm_match_entry *e, *tmp;
+
+	HASH_ITER (hh, comm_match_cache, e, tmp) {
+		HASH_DEL(comm_match_cache, e);
+		free(e);
+	}
+}
+
+/* Same rule as the bpf backend: the thread comm must equal --comm. */
+static bool perf_capture_comm_match(unsigned int tid, uint64_t now)
+{
+	struct comm_match_entry *e = NULL;
+	char comm[TASK_COMM_LEN] = { 0 };
+
+	if (!perf_capture_config.comm[0])
+		return true;
+
+	HASH_FIND_INT(comm_match_cache, &tid, e);
+	if (e && now - e->checked_ts < COMM_MATCH_RECHECK_NS)
+		return e->matched;
+
+	if (!e) {
+		/* Host-wide sampling sees short-lived tids; keep the cache bounded. */
+		if (HASH_COUNT(comm_match_cache) >= COMM_MATCH_CACHE_MAX)
+			comm_match_cache_destroy();
+		e = calloc(1, sizeof(*e));
+		if (!e)
+			return false;
+		e->tid = tid;
+		HASH_ADD_INT(comm_match_cache, tid, e);
+	}
+	e->matched = get_pid_comm_direct(tid, comm) == 0 && strcmp(comm, perf_capture_config.comm) == 0;
+	e->checked_ts = now;
+
+	return e->matched;
+}
+
 static bool perf_capture_pid_match(unsigned int pid, unsigned int tid)
 {
 	return !perf_capture_config.pid || pid == perf_capture_config.pid || tid == perf_capture_config.pid;
+}
+
+static bool perf_capture_task_match(unsigned int pid, unsigned int tid, uint64_t now)
+{
+	return perf_capture_pid_match(pid, tid) && perf_capture_comm_match(tid, now);
 }
 
 /*
@@ -225,7 +298,7 @@ static void perf_offcpu_handler(struct perf_stack_event *event, void *data)
 {
 	if (atomic_load_explicit(&capture_state, memory_order_acquire) != STACK_PROCESS_STATE_RUNNING)
 		return;
-	if (event->pid == 0 || !perf_capture_pid_match(event->pid, event->tid))
+	if (event->pid == 0 || !perf_capture_task_match(event->pid, event->tid, event->time))
 		return;
 
 	struct offcpu_thread *t = offcpu_thread_get(event->tid, event->time);
@@ -245,7 +318,7 @@ static void perf_switch_handler(const struct perf_switch_event *event, void *dat
 
 	offcpu_threads_purge(event->time);
 
-	if (event->pid == 0 || !perf_capture_pid_match(event->pid, event->tid))
+	if (event->pid == 0 || !perf_capture_task_match(event->pid, event->tid, event->time))
 		return;
 
 	struct offcpu_thread *t = offcpu_thread_get(event->tid, event->time);
@@ -375,6 +448,26 @@ static int perf_cgroup_open(const char *spec)
 	return fd;
 }
 
+/* The kernfs file handle of a cgroup directory is its cgroup id. */
+static unsigned long perf_cgroup_id(int cgroup_fd)
+{
+	struct file_handle *handle = calloc(1, sizeof(*handle) + sizeof(unsigned long));
+	unsigned long id = 0;
+	int mount_id;
+
+	if (!handle)
+		return 0;
+
+	handle->handle_bytes = sizeof(unsigned long);
+	if (name_to_handle_at(cgroup_fd, "", handle, &mount_id, AT_EMPTY_PATH) == 0)
+		memcpy(&id, handle->f_handle, sizeof(id));
+	else
+		CLI_ERROR("Failed to read perf_event cgroup id: %s", strerror(errno));
+
+	free(handle);
+	return id;
+}
+
 void perf_capture_handler(struct perf_stack_event *event, void *data)
 {
 	if (atomic_load_explicit(&capture_state, memory_order_acquire) != STACK_PROCESS_STATE_RUNNING)
@@ -385,7 +478,7 @@ void perf_capture_handler(struct perf_stack_event *event, void *data)
 	 * event opener, and as 0 for tasks outside it, so this filter works
 	 * inside containers where BPF-side pid filtering would see host pids.
 	 */
-	if (!perf_capture_pid_match(event->pid, event->tid))
+	if (!perf_capture_task_match(event->pid, event->tid, event->time))
 		return;
 
 	enum drop_sample_result drop_state = should_drop_sample();
@@ -429,6 +522,23 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 	}
 	perf_capture_config.pid = pid;
 
+	/* Same rule as the bpf backend, clamped to the perf dump limit. */
+	int stack_size = atoi(get_arg_by_name(ctx, "stack_size"));
+	if (stack_size < 4096 || stack_size > 65536 || stack_size % 4096 != 0) {
+		CLI_ERROR("Please use stack_size >= 4096 && <= 65536 && align to 4096");
+		return CPA_INIT_FAILED;
+	}
+	if (stack_size > MAX_USER_STACK_DUMP_SIZE)
+		stack_size = MAX_USER_STACK_DUMP_SIZE;
+
+	perf_capture_config.kernel_only = atoi(get_arg_by_name(ctx, "kernel_stack")) != 0;
+
+	const char *comm = get_arg_by_name(ctx, "comm");
+	memset(perf_capture_config.comm, 0, sizeof(perf_capture_config.comm));
+	if (!cli_arg_is_null_default(comm))
+		snprintf(perf_capture_config.comm, sizeof(perf_capture_config.comm), "%s", comm);
+	comm_match_cache_destroy();
+
 	/* --offcpu alone collects off-CPU only; with --oncpu both go into one store. */
 	bool offcpu = atoi(get_arg_by_name(ctx, "offcpu")) != 0;
 	bool oncpu = !offcpu || atoi(get_arg_by_name(ctx, "oncpu")) != 0;
@@ -457,10 +567,12 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 		close(perf_capture_config.cgroup_fd);
 		perf_capture_config.cgroup_fd = -1;
 	}
+	perf_capture_config.cgid = 0;
 	if (cgroup_spec) {
 		perf_capture_config.cgroup_fd = perf_cgroup_open(cgroup_spec);
 		if (perf_capture_config.cgroup_fd < 0)
 			return CPA_INIT_FAILED;
+		perf_capture_config.cgid = perf_cgroup_id(perf_capture_config.cgroup_fd);
 	}
 
 	if (perf_ctx) {
@@ -473,6 +585,8 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 		.sample_freq = perf_capture_config.freq,
 		.cgroup_fd = perf_capture_config.cgroup_fd,
 		.oncpu = oncpu,
+		.stack_size = stack_size,
+		.kernel_only = perf_capture_config.kernel_only,
 		.handler = perf_capture_handler,
 		.offcpu_period = perf_capture_config.offcpu_period,
 		.offcpu_stack_size = perf_capture_config.offcpu_stack_size,
@@ -500,6 +614,7 @@ static void cpa_perf_capture_destroy_fn(void *worker_ctx)
 		perf_ctx = NULL;
 	}
 	offcpu_threads_destroy();
+	comm_match_cache_destroy();
 	if (perf_capture_config.cgroup_fd >= 0) {
 		close(perf_capture_config.cgroup_fd);
 		perf_capture_config.cgroup_fd = -1;

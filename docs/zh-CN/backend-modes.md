@@ -76,13 +76,7 @@ BPF 路径会用到：
 
 如果用户指定了 `--backend=perf`，但同时又开启了 perf 不支持的选项，CPA 会直接报错。
 
-当前会被拒绝的组合包括：
-
-- `--oneshot`
-- `--probe`
-- `--comm`
-- `--kernel_stack`
-- 非默认 `--stack_size`
+当前只有 `--probe` 会被拒绝。`--oneshot`、`--comm`、`--kernel_stack`、`--stack_size` 在 perf 后端的语义和 BPF 一致；其中 `--comm` 在用户态按线程名过滤，内核仍会复制不匹配线程的栈，建议配合 `--perf_cgroup` 缩小范围。
 
 `--backend=perf --offcpu` 是允许的，和 BPF 后端一样只采 off-CPU，但实现不同（perf 配对上下文切换记录，BPF 挂 `finish_task_switch`）。因此带 `--offcpu` 的 BPF 请求不会自动回退到 perf。`--oncpu --offcpu` 只有 perf 后端支持。
 
@@ -109,16 +103,14 @@ CPA 会检查：
 
 ### 可以回退到 perf 的情况
 
-只有“纯 on-CPU 持续采样”这一类请求可以回退。也就是：
+两条后端语义一致的请求可以回退，也就是：
 
 - `backend=bpf`
-- 没开 `--oneshot`
 - 没开 `--offcpu`
 - 没开 `--probe`
 - 没设置 `--pid`
-- 没设置 `--comm`
-- 没开 `--kernel_stack`
-- 没把 `--stack_size` 改成非默认值
+
+`--oneshot`、`--comm`、`--kernel_stack`、`--stack_size` 不影响回退。
 
 如果这时 BPF 不满足，CPA 会：
 
@@ -131,16 +123,11 @@ CPA 会检查：
 
 以下模式一旦 BPF 不满足，CPA 会直接报错退出：
 
-- `--oneshot`
 - `--offcpu`
 - `--probe`
 - `--pid`
-- `--comm`
-- `--kernel_stack`
-- 非默认 `--stack_size`
 
-原因很直接：这些能力要么完全是 BPF 专属，要么 perf 路径不能等价保留语义。
-其中 `--pid` 虽然 perf 也支持，但 pid 所属的命名空间不同，所以不会自动回退。
+`--probe` 是 BPF 专属；`--pid` 和 `--offcpu` 虽然 perf 也支持，但 pid 所属的命名空间、off-CPU 的实现方式都不同，所以不会自动回退。
 
 ## perf 后端的真实能力边界
 
@@ -152,9 +139,6 @@ CPA 会检查：
 当前 perf 后端不提供：
 
 - `probe`
-- one-shot
-- BPF 侧 `comm/kernel_stack` 过滤（`--pid` 在 perf 路径上由用户态过滤，见上文）
-- 自定义 `stack_size` 语义
 - IRQOFF 记录
 
 另外，当前 perf 路径的 metadata 中 `cgroup_id` 也不像 BPF 路径那样来自内核采样点，因此该字段可能为 `0`。
@@ -166,7 +150,7 @@ CPA 会检查：
 CPA 会输出类似下面的 warning：
 
 ```text
-WARNING: BPF capability check failed: <reason>. Falling back to perf backend; perf only supports on-cpu continuous profiling and provides no IRQOFF records.
+WARNING: BPF capability check failed: <reason>. Falling back to perf backend; perf provides no IRQOFF records.
 ```
 
 ### 必须失败时
@@ -174,7 +158,7 @@ WARNING: BPF capability check failed: <reason>. Falling back to perf backend; pe
 如果当前请求依赖 BPF 专属能力，则会输出类似：
 
 ```text
-BPF capability check failed: <reason>. Requested mode requires BPF backend and cannot fall back to perf; perf backend only supports on-cpu continuous profiling.
+BPF capability check failed: <reason>. Requested mode requires BPF backend and cannot fall back to perf; perf has no --probe and different --pid/--offcpu semantics.
 ```
 
 ## 使用建议
@@ -183,8 +167,7 @@ BPF capability check failed: <reason>. Requested mode requires BPF backend and c
 
 - 你依赖 kprobe 方式的 off-CPU
 - 你明确依赖 `--probe`
-- 你要 one-shot
-- 你要 BPF 侧过滤或内核栈-only 语义
+- 你需要在内核里按 pid/comm 过滤（perf 在用户态过滤）
 - 你关心 IRQOFF 记录
 
 ### 什么时候可以接受自动回退

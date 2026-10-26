@@ -252,11 +252,11 @@ taskset -c 0 libs/libgunwinder/bin/cfi_bench \
 - `--freq, -F <HZ>`：采样频率。
 - `--record_interval, -r <SEC>`：存储轮转和查询粒度。
 - `--persistent_day, -P <DAYS>`：只保留最近 N 天的持续采集目录。
-- `--oneshot`：不做目录轮转，只输出一个 flamegraph profile。需要 BPF 后端。
+- `--oneshot`：不做目录轮转，只输出一个 flamegraph profile。
 - `--output_prof, -o <PATH>`：one-shot 模式输出路径，默认 `cpa.prof`。
 - `--pid, -p <PID>`：只采集指定 pid。BPF 后端按宿主机 pid 匹配；`--backend perf` 按 cpa 所在 PID 命名空间的 pid 匹配，适合在容器内使用。
-- `--comm, -n <NAME>`：按 comm/group-comm 过滤采集对象。需要 BPF 后端。
-- `--kernel_stack, -K`：只采集内核态栈。需要 BPF 后端。
+- `--comm, -n <NAME>`：只采线程名等于 NAME 的线程（按内核规则截断到 15 字符）。perf 后端在用户态过滤。
+- `--kernel_stack, -K`：只采集内核态栈。
 - `--offcpu, -u`：只采集 off-CPU 样本（不再采 on-CPU）。BPF 和 perf 后端都支持。
 - `--oncpu`：和 `--offcpu` 一起使用时，perf 后端同时采 on-CPU 和 off-CPU，写入同一个 store。perf 后端带 `--offcpu` 时计数单位为微秒。
 - `--offcpu_period <N>`：perf 后端 `--offcpu` 时每 N 次上下文切换采一次 off-CPU 调用栈，默认 100。
@@ -269,7 +269,7 @@ taskset -c 0 libs/libgunwinder/bin/cfi_bench \
 - `--record_env_name, -R <LIST>`：把这些环境变量键写入 metadata，供 `cpa show` 后续过滤。
 - `--parse_env_values, -V <LIST>`：只对环境变量值匹配该列表的进程做用户态展开。
 - `--max_queue_size, -m <N>`：内存中 stack event 队列的上限。
-- `--stack_size <BYTES>`：BPF 后端用户态栈抓取缓冲大小，必须 4K 对齐，范围 `[4096, 65536]`。perf 后端不支持自定义这一语义。
+- `--stack_size <BYTES>`：每个样本复制的用户栈大小，必须 4K 对齐，范围 `[4096, 65536]`，默认 8192。perf 后端最多复制 60 KiB；调用栈很深的进程建议调大。
 - `--max_cache_size_mb <MB>`：符号和调试缓存超过该限制时重启 monitor。
 - `--max_store_size_mb <MB>`：store 目录超过该限制时重启 monitor，并清理旧目录。
 - `--log_print_cycles <N>`：每 N 个 timer 周期打印一次本地运行状态。

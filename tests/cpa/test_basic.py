@@ -123,8 +123,8 @@ def test_cpa_monitor_rejects_perf_backend_with_probe(tmp_path):
 
     full_output = f"{stdout}{stderr}".lower()
     assert return_code != 0
-    assert "perf backend only supports on-cpu continuous profiling" in full_output
-    assert "require bpf backend" in full_output
+    assert "perf backend does not support --probe" in full_output
+    assert "requires bpf backend" in full_output
 
 
 def test_cpa_monitor_falls_back_to_perf_when_bpf_prereqs_missing(tmp_path):
@@ -173,8 +173,7 @@ def test_cpa_monitor_rejects_bpf_only_offcpu_when_bpf_prereqs_missing(tmp_path):
 @pytest.mark.parametrize(
     "extra_args",
     [
-        ["--kernel_stack"],
-        ["--oneshot", "--output_prof", "cpa.prof"],
+        ["--probe=kprobe:try_to_free_pages"],
         ["--pid=1"],
     ],
 )
@@ -252,21 +251,21 @@ def test_cpa_monitor_rejects_non_positive_persistent_day(tmp_path):
     assert ("> 0" in full_output) or ("greater than 0" in full_output)
 
 
-def test_cpa_monitor_rejects_perf_backend_with_oneshot(tmp_path):
+def test_cpa_monitor_perf_backend_oneshot_writes_profile(tmp_path):
+    output = tmp_path / "cpa.prof"
     stdout, stderr, return_code = run_command(
         [
             "monitor",
             "--backend=perf",
             "--oneshot",
-            "--duration=1",
+            "--duration=2",
             "--output_prof",
-            str(tmp_path / "cpa.prof"),
+            str(output),
         ]
     )
 
-    full_output = f"{stdout}{stderr}".lower()
-    assert return_code != 0
-    assert "perf backend only supports on-cpu continuous profiling" in full_output
+    assert return_code == 0, f"{stdout}{stderr}"
+    assert output.exists()
 
 
 @pytest.mark.parametrize(
@@ -277,7 +276,7 @@ def test_cpa_monitor_rejects_perf_backend_with_oneshot(tmp_path):
         ["--stack_size=16384"],
     ],
 )
-def test_cpa_monitor_rejects_perf_backend_with_bpf_side_options(tmp_path, extra_args):
+def test_cpa_monitor_accepts_perf_backend_with_bpf_aligned_options(tmp_path, extra_args):
     stdout, stderr, return_code = run_command(
         [
             "monitor",
@@ -290,8 +289,36 @@ def test_cpa_monitor_rejects_perf_backend_with_bpf_side_options(tmp_path, extra_
     )
 
     full_output = f"{stdout}{stderr}".lower()
-    assert return_code != 0
-    assert "require bpf backend" in full_output
+    assert return_code == 0, full_output
+    assert "requires bpf backend" not in full_output
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["--kernel_stack"],
+        ["--oneshot", "--output_prof", "cpa.prof"],
+    ],
+)
+def test_cpa_monitor_bpf_aligned_modes_fall_back_to_perf(tmp_path, extra_args):
+    invalid_btf = _write_invalid_btf(tmp_path)
+
+    stdout, stderr, return_code = run_command(
+        [
+            "monitor",
+            "--backend=bpf",
+            "--duration=1",
+            "--store_dir",
+            str(tmp_path),
+            f"--btf_path={invalid_btf}",
+            *extra_args,
+        ],
+        cwd=str(tmp_path),
+    )
+
+    full_output = f"{stdout}{stderr}".lower()
+    assert return_code == 0, full_output
+    assert "falling back to perf" in full_output
 
 
 def test_cpa_monitor_accepts_perf_backend_with_pid(tmp_path):

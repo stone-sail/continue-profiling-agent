@@ -28,7 +28,7 @@ Useful options:
 
 - `--backend bpf|perf`: choose the sampling backend
 - `--pid <pid>`: limit capture to one process
-- `--comm <name>`: limit capture by command name
+- `--comm <name>`: capture only threads whose comm equals name
 - `--record_interval <sec>`: control the storage/query granularity
 - `--persistent_day <days>`: retain only recent profile directories
 - `--record_env_name <k1,k2>`: persist selected environment keys for later

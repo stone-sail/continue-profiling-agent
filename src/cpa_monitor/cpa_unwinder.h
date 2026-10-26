@@ -22,6 +22,8 @@
  */
 #define STACK_EVENT_OFFCPU (1 << STACK_EVENT_MAX_BIT)
 #define STACK_EVENT_DROP_BY_PRESSURE (1 << (STACK_EVENT_MAX_BIT + 1))
+/* perf --kernel_stack: the sample has no user stack to unwind */
+#define STACK_EVENT_KERNEL_ONLY (1 << (STACK_EVENT_MAX_BIT + 2))
 #define ALREADY_RESTORE_FLAG (~0UL)
 
 /**

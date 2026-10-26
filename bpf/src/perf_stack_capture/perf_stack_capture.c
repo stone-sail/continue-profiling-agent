@@ -42,6 +42,7 @@ struct perf_stack_capture_ctx {
 	/* off-CPU context switch events; NULL when off-CPU is disabled */
 	int *off_fds;
 	void **off_mmap_bufs;
+	unsigned long sample_type;
 	atomic_bool stop_thread;
 	pthread_t poll_thread;
 	int epoll_fd;
@@ -82,7 +83,8 @@ static void hexdump_u64(const void *ptr, size_t size)
 	}
 }
 
-static unsigned long sample_type = PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_CPU | PERF_SAMPLE_CALLCHAIN | PERF_SAMPLE_REGS_USER | PERF_SAMPLE_STACK_USER;
+#define PERF_STACK_CAPTURE_KERNEL_SAMPLE_TYPE (PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_CPU | PERF_SAMPLE_CALLCHAIN)
+#define PERF_STACK_CAPTURE_SAMPLE_TYPE (PERF_STACK_CAPTURE_KERNEL_SAMPLE_TYPE | PERF_SAMPLE_REGS_USER | PERF_SAMPLE_STACK_USER)
 
 struct perf_stack_event global_sample;
 
@@ -313,7 +315,7 @@ static void process_perf_data(struct perf_stack_capture_ctx *ctx, struct perf_ev
 				size_t payload_size = 0;
 				if (event_header->size > sizeof(struct perf_event_header))
 					payload_size = event_header->size - sizeof(struct perf_event_header);
-				parse_perf_stack_event((void *)((unsigned char *)event_header + sizeof(struct perf_event_header)), sample_type, &global_sample, payload_size);
+				parse_perf_stack_event((void *)((unsigned char *)event_header + sizeof(struct perf_event_header)), ctx->sample_type, &global_sample, payload_size);
 				if (handler)
 					handler(&global_sample, ctx->handler_data);
 			} else if (event_header->type == PERF_RECORD_SWITCH || event_header->type == PERF_RECORD_SWITCH_CPU_WIDE) {
@@ -396,7 +398,7 @@ static int perf_open_cpu_events(struct perf_stack_capture_ctx *ctx, struct perf_
 	for (cpu = 0; cpu < ctx->perf_cpu_num; cpu++) {
 		fds[cpu] = syscall(__NR_perf_event_open, attr, pid, cpu, -1, flags);
 		if (fds[cpu] < 0) {
-			BPF_ERR("failed to open perf event type=%u config=%llu cpu=%d cgroup=%d: %s\n", attr->type, (unsigned long long)attr->config, cpu, cgroup_fd, strerror(errno));
+			BPF_ERR("failed to open perf event type=%u config=%llu sample_type=%llx cpu=%d cgroup=%d: %s\n", attr->type, (unsigned long long)attr->config, (unsigned long long)attr->sample_type, cpu, cgroup_fd, strerror(errno));
 			return -1;
 		}
 
@@ -464,6 +466,8 @@ struct perf_stack_capture_ctx *perf_setup_stack_capture(const struct perf_stack_
 	ctx->offcpu_handler = opts->offcpu_handler;
 	ctx->switch_handler = opts->switch_handler;
 	ctx->handler_data = opts->handler_data;
+	/* Kernel-only samples carry no user registers or stack dump. */
+	ctx->sample_type = opts->kernel_only ? PERF_STACK_CAPTURE_KERNEL_SAMPLE_TYPE : PERF_STACK_CAPTURE_SAMPLE_TYPE;
 
 	ctx->sleep_us = 1000 * 1000 / opts->sample_freq;
 	atomic_init(&ctx->lost_events, 0);
@@ -474,9 +478,10 @@ struct perf_stack_capture_ctx *perf_setup_stack_capture(const struct perf_stack_
 		.config = PERF_COUNT_SW_CPU_CLOCK,
 		.sample_freq = opts->sample_freq,
 		.freq = 1,
-		.sample_type = sample_type,
-		.sample_stack_user = MAX_USER_STACK_DUMP_SIZE,
-		.sample_regs_user = PERF_STACK_CAPTURE_REGS_USER,
+		.sample_type = ctx->sample_type,
+		.sample_stack_user = opts->kernel_only ? 0 : opts->stack_size,
+		.sample_regs_user = opts->kernel_only ? 0 : PERF_STACK_CAPTURE_REGS_USER,
+		.exclude_callchain_user = opts->kernel_only,
 		.disabled = 1,
 		.exclude_kernel = 0,
 		.exclude_user = 0,
@@ -510,9 +515,10 @@ struct perf_stack_capture_ctx *perf_setup_stack_capture(const struct perf_stack_
 			.size = sizeof(struct perf_event_attr),
 			.config = PERF_COUNT_SW_CONTEXT_SWITCHES,
 			.sample_period = opts->offcpu_period,
-			.sample_type = sample_type,
-			.sample_stack_user = opts->offcpu_stack_size,
-			.sample_regs_user = PERF_STACK_CAPTURE_REGS_USER,
+			.sample_type = ctx->sample_type,
+			.sample_stack_user = opts->kernel_only ? 0 : opts->offcpu_stack_size,
+			.sample_regs_user = opts->kernel_only ? 0 : PERF_STACK_CAPTURE_REGS_USER,
+			.exclude_callchain_user = opts->kernel_only,
 			.disabled = 1,
 			.context_switch = 1,
 			.sample_id_all = 1,
@@ -546,6 +552,7 @@ struct perf_stack_capture_ctx *perf_setup_stack_capture_event(int sample_period,
 		.sample_freq = sample_period,
 		.cgroup_fd = -1,
 		.oncpu = true,
+		.stack_size = MAX_USER_STACK_DUMP_SIZE,
 		.handler = handler,
 		.handler_data = handler_data,
 	};

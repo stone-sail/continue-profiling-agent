@@ -413,7 +413,7 @@ static int cpa_probe_bpf_runtime(const struct cpa_monitor_mode *mode, char *reas
 
 static bool cpa_perf_mode_uses_bpf_only_features(const struct cpa_monitor_mode *mode)
 {
-	return mode->oneshot || mode->probe_enabled || mode->kernel_stack || mode->comm_filter || mode->stack_size != 8192;
+	return mode->probe_enabled;
 }
 
 /*
@@ -439,7 +439,7 @@ static int cpa_reject_perf_backend(const struct cpa_monitor_mode *mode)
 	}
 
 	if (!strcmp(mode->backend, "perf") && cpa_perf_mode_uses_bpf_only_features(mode)) {
-		CLI_ERROR("perf backend only supports continuous on-cpu and off-cpu profiling; --oneshot, --probe, --comm, --kernel_stack, and non-default --stack_size require bpf backend");
+		CLI_ERROR("perf backend does not support --probe; probe-triggered capture requires bpf backend");
 		return -EINVAL;
 	}
 
@@ -482,7 +482,7 @@ int cpa_monitor_prepare_backend(void *ctx)
 		return 0;
 
 	if (!cpa_bpf_mode_can_fallback_to_perf(&mode)) {
-		CLI_ERROR("BPF capability check failed: %s. Requested mode requires BPF backend and cannot fall back to perf; perf backend only supports on-cpu continuous profiling.", reason);
+		CLI_ERROR("BPF capability check failed: %s. Requested mode requires BPF backend and cannot fall back to perf; perf has no --probe and different --pid/--offcpu semantics.", reason);
 		return ret;
 	}
 
@@ -492,6 +492,6 @@ int cpa_monitor_prepare_backend(void *ctx)
 		return ret;
 	}
 
-	CLI_ERROR("WARNING: BPF capability check failed: %s. Falling back to perf backend; perf only supports on-cpu continuous profiling and provides no IRQOFF records.", reason);
+	CLI_ERROR("WARNING: BPF capability check failed: %s. Falling back to perf backend; perf provides no IRQOFF records.", reason);
 	return 0;
 }

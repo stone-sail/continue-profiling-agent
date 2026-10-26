@@ -783,7 +783,7 @@ static void cpa_unwind(struct stack_sample *sample)
 	cli_stackmap_append(trace_stackmap, cpa_base_info);
 	cli_stackmap_entry_reverse_ids(trace_stackmap);
 
-	if (sample->type & STACK_EVENT_KTHREAD || sample->type & STACK_EVENT_DROP_BY_PRESSURE || should_drop_sample() == DROP_SAMPLE_RESULT_FULL_DROP || !cpa_env_should_parse(env_name)) {
+	if (sample->type & (STACK_EVENT_KTHREAD | STACK_EVENT_KERNEL_ONLY) || sample->type & STACK_EVENT_DROP_BY_PRESSURE || should_drop_sample() == DROP_SAMPLE_RESULT_FULL_DROP || !cpa_env_should_parse(env_name)) {
 		backtrace_user = false;
 		if (should_drop_sample() == DROP_SAMPLE_RESULT_FULL_DROP) {
 			cli_stackmap_append(trace_stackmap, "<# PRESSURE FULL DROP SAMPLE #>");

@@ -28,7 +28,7 @@ sudo ./build/bin/cpa monitor \
 
 - `--backend bpf|perf`：选择采样后端
 - `--pid <pid>`：限制到某个进程
-- `--comm <name>`：按进程名过滤
+- `--comm <name>`：只采线程名等于 name 的线程
 - `--record_interval <sec>`：控制存储和查询粒度
 - `--persistent_day <days>`：仅保留最近若干天的目录
 - `--record_env_name <k1,k2>`：记录指定环境变量键，供 `cpa show` 后续过滤

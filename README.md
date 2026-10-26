@@ -271,11 +271,11 @@ Shared generic options:
 - `--freq, -F <HZ>`: sampling frequency.
 - `--record_interval, -r <SEC>`: store rotation and query granularity.
 - `--persistent_day, -P <DAYS>`: retain only the latest N days of continuous stores.
-- `--oneshot`: write a single flamegraph profile instead of rotating store directories. Requires the BPF backend.
+- `--oneshot`: write a single flamegraph profile instead of rotating store directories.
 - `--output_prof, -o <PATH>`: output path for one-shot mode. Default: `cpa.prof`.
 - `--pid, -p <PID>`: capture one target pid. The BPF backend matches host pids; `--backend perf` matches pids in the pid namespace of cpa, which suits running inside a container.
-- `--comm, -n <NAME>`: capture tasks matching one comm/group-comm name. Requires the BPF backend.
-- `--kernel_stack, -K`: capture kernel-space stacks only. Requires the BPF backend.
+- `--comm, -n <NAME>`: capture threads whose comm equals NAME (truncated to 15 characters like the kernel). The perf backend filters in userspace.
+- `--kernel_stack, -K`: capture kernel-space stacks only.
 - `--offcpu, -u`: collect off-CPU samples instead of on-CPU samples. Supported on both backends.
 - `--oncpu`: together with `--offcpu`, the perf backend collects on-CPU and off-CPU into one store. Perf stores with `--offcpu` are counted in microseconds.
 - `--offcpu_period <N>`: on the perf backend with `--offcpu`, capture one off-CPU stack every N context switches. Default: 100.
@@ -288,7 +288,7 @@ Shared generic options:
 - `--record_env_name, -R <LIST>`: record these env keys into metadata so `cpa show` can filter on them.
 - `--parse_env_values, -V <LIST>`: only unwind user stacks for processes whose recorded env values match this list.
 - `--max_queue_size, -m <N>`: maximum in-memory stack event queue length before backpressure.
-- `--stack_size <BYTES>`: BPF backend user-stack capture buffer size. Must be 4K-aligned and within `[4096, 65536]`. The perf backend does not support custom stack-size semantics.
+- `--stack_size <BYTES>`: user stack bytes copied per sample. Must be 4K-aligned and within `[4096, 65536]`. Default: 8192. The perf backend copies at most 60 KiB; raise it for processes with deep stacks.
 - `--max_cache_size_mb <MB>`: restart monitor when symbol/debug cache usage exceeds this limit.
 - `--max_store_size_mb <MB>`: restart monitor and trim old stores when store usage exceeds this limit.
 - `--log_print_cycles <N>`: print local runtime statistics every N timer cycles.

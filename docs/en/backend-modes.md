@@ -86,13 +86,10 @@ selected mode.
 CPA rejects the request if perf-only mode is asked to carry options that perf
 does not implement.
 
-The current rejected combinations include:
-
-- `--oneshot`
-- `--probe`
-- `--comm`
-- `--kernel_stack`
-- non-default `--stack_size`
+Only `--probe` is rejected now. `--oneshot`, `--comm`, `--kernel_stack` and
+`--stack_size` keep the BPF semantics on the perf backend; `--comm` filters by
+thread comm in userspace, so the kernel still copies stacks of other threads
+and `--perf_cgroup` is recommended to narrow the scope.
 
 `--backend=perf --offcpu` is accepted and, like the BPF backend, collects off-CPU
 only, through a different mechanism (perf pairs context switch records, BPF
@@ -123,16 +120,14 @@ Not every BPF failure is allowed to fall back to perf.
 
 ### Eligible for perf fallback
 
-Only plain continuous on-CPU profiling can fall back. In practice that means:
+Requests whose semantics match on both backends can fall back. In practice that means:
 
 - `backend=bpf`
-- no `--oneshot`
 - no `--offcpu`
 - no `--probe`
 - no `--pid`
-- no `--comm`
-- no `--kernel_stack`
-- no non-default `--stack_size`
+
+`--oneshot`, `--comm`, `--kernel_stack` and `--stack_size` do not block fallback.
 
 When this request fails the BPF preflight, CPA will:
 
@@ -145,17 +140,13 @@ When this request fails the BPF preflight, CPA will:
 
 CPA hard-fails when BPF is unavailable for any of these modes:
 
-- `--oneshot`
 - `--offcpu`
 - `--probe`
 - `--pid`
-- `--comm`
-- `--kernel_stack`
-- non-default `--stack_size`
 
-The reason is straightforward: these features are either BPF-only or not
-semantically preserved by the perf backend. perf does support `--pid`, but in
-a different pid namespace, so `--pid` requests never fall back automatically.
+`--probe` is BPF-only; perf supports `--pid` and `--offcpu`, but in a different
+pid namespace and with a different off-CPU mechanism, so neither falls back
+automatically.
 
 ## Actual perf Backend Limits
 
@@ -168,10 +159,6 @@ The current perf backend only promises:
 The current perf backend does not provide:
 
 - `probe`
-- one-shot mode
-- BPF-side `comm/kernel_stack` filtering (`--pid` is filtered in userspace on
-  the perf path, see above)
-- custom `stack_size` semantics
 - IRQOFF records
 
 Also, unlike the BPF path, the current perf path does not populate `cgroup_id`
@@ -185,7 +172,7 @@ stores.
 CPA emits a warning like:
 
 ```text
-WARNING: BPF capability check failed: <reason>. Falling back to perf backend; perf only supports on-cpu continuous profiling and provides no IRQOFF records.
+WARNING: BPF capability check failed: <reason>. Falling back to perf backend; perf provides no IRQOFF records.
 ```
 
 ### Hard failure
@@ -193,7 +180,7 @@ WARNING: BPF capability check failed: <reason>. Falling back to perf backend; pe
 When the request relies on BPF-only semantics, CPA emits an error like:
 
 ```text
-BPF capability check failed: <reason>. Requested mode requires BPF backend and cannot fall back to perf; perf backend only supports on-cpu continuous profiling.
+BPF capability check failed: <reason>. Requested mode requires BPF backend and cannot fall back to perf; perf has no --probe and different --pid/--offcpu semantics.
 ```
 
 ## Practical Guidance
@@ -204,8 +191,7 @@ Use BPF explicitly when you need:
 
 - kprobe-based off-CPU
 - `--probe`
-- one-shot mode
-- BPF-side filtering or kernel-stack-only semantics
+- in-kernel pid/comm filtering (perf filters in userspace)
 - IRQOFF records
 
 ### When automatic fallback is acceptable

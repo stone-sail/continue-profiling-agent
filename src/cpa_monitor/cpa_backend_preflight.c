@@ -412,11 +412,6 @@ static int cpa_probe_bpf_runtime(const struct cpa_monitor_mode *mode, char *reas
 	return cpa_probe_timer_sampling_support(reason, reason_sz);
 }
 
-static bool cpa_perf_mode_uses_bpf_only_features(const struct cpa_monitor_mode *mode)
-{
-	return mode->probe_enabled;
-}
-
 /*
  * --pid is accepted by both backends with different pid namespace semantics:
  * BPF matches init-namespace pids, perf matches pids in the pid namespace of
@@ -425,7 +420,7 @@ static bool cpa_perf_mode_uses_bpf_only_features(const struct cpa_monitor_mode *
  */
 static bool cpa_bpf_mode_can_fallback_to_perf(const struct cpa_monitor_mode *mode)
 {
-	return !cpa_perf_mode_uses_bpf_only_features(mode) && mode->pid <= 0 && !mode->offcpu;
+	return mode->pid <= 0 && !mode->offcpu;
 }
 
 static int cpa_reject_perf_backend(const struct cpa_monitor_mode *mode)
@@ -438,9 +433,8 @@ static int cpa_reject_perf_backend(const struct cpa_monitor_mode *mode)
 		CLI_ERROR("the bpf backend collects either on-CPU or off-CPU; use --backend perf to collect both with --oncpu --offcpu");
 		return -EINVAL;
 	}
-
-	if (!strcmp(mode->backend, "perf") && cpa_perf_mode_uses_bpf_only_features(mode)) {
-		CLI_ERROR("perf backend does not support --probe; probe-triggered capture requires bpf backend");
+	if (!strcmp(mode->backend, "perf") && mode->probe_enabled && mode->offcpu) {
+		CLI_ERROR("--probe cannot be combined with --offcpu");
 		return -EINVAL;
 	}
 
@@ -499,7 +493,7 @@ int cpa_monitor_prepare_backend(void *ctx)
 		return 0;
 
 	if (!cpa_bpf_mode_can_fallback_to_perf(&mode)) {
-		CLI_ERROR("BPF capability check failed: %s. Requested mode requires BPF backend and cannot fall back to perf; perf has no --probe and different --pid/--offcpu semantics.", reason);
+		CLI_ERROR("BPF capability check failed: %s. Requested mode requires BPF backend and cannot fall back to perf; perf uses different --pid/--offcpu semantics.", reason);
 		return ret;
 	}
 

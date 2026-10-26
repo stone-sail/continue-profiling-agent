@@ -501,6 +501,17 @@ struct perf_stack_capture_ctx *perf_setup_stack_capture(const struct perf_stack_
 		goto error;
 	}
 
+	if (opts->probe_type) {
+		/* kprobe PMU events take the function name in config1 (kprobe_func). */
+		attr.type = opts->probe_type;
+		attr.config = opts->probe_config;
+		attr.config1 = (unsigned long long)(uintptr_t)opts->probe_func;
+		attr.config2 = 0;
+		attr.freq = 0;
+		attr.sample_period = 1;
+		attr.exclude_idle = 0;
+	}
+
 	if (opts->oncpu && perf_open_cpu_events(ctx, &attr, opts->cgroup_fd, &ctx->pmu_fds, &ctx->mmap_bufs) < 0)
 		goto error;
 

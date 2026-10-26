@@ -109,22 +109,44 @@ def test_cpa_monitor_rejects_oncpu_and_offcpu_on_bpf_backend(tmp_path):
     assert "use --backend perf" in f"{stdout}{stderr}"
 
 
-def test_cpa_monitor_rejects_perf_backend_with_probe(tmp_path):
+@pytest.mark.parametrize(
+    "probe",
+    [
+        "kprobe:try_to_free_pages",
+        "kretprobe:try_to_free_pages",
+        "tracepoint:sched:sched_process_exit",
+    ],
+)
+def test_cpa_monitor_perf_backend_with_probe(tmp_path, probe):
     stdout, stderr, return_code = run_command(
         [
             "monitor",
             "--backend=perf",
-            "--probe=kprobe:try_to_free_pages",
+            f"--probe={probe}",
             "--duration=1",
             "--store_dir",
             str(tmp_path),
         ]
     )
 
-    full_output = f"{stdout}{stderr}".lower()
+    assert return_code == 0, f"{stdout}{stderr}"
+
+
+@pytest.mark.parametrize(
+    "extra_args, message",
+    [
+        (["--probe=uprobe:/bin/true:main"], "invalid probe"),
+        (["--probe=tracepoint:sched"], "invalid probe"),
+        (["--probe=kprobe:try_to_free_pages", "--offcpu"], "cannot be combined with --offcpu"),
+    ],
+)
+def test_cpa_monitor_perf_backend_rejects_bad_probe(tmp_path, extra_args, message):
+    stdout, stderr, return_code = run_command(
+        ["monitor", "--backend=perf", "--duration=1", "--store_dir", str(tmp_path), *extra_args]
+    )
+
     assert return_code != 0
-    assert "perf backend does not support --probe" in full_output
-    assert "requires bpf backend" in full_output
+    assert message in f"{stdout}{stderr}".lower()
 
 
 def test_cpa_monitor_falls_back_to_perf_when_bpf_prereqs_missing(tmp_path):
@@ -173,7 +195,6 @@ def test_cpa_monitor_rejects_bpf_only_offcpu_when_bpf_prereqs_missing(tmp_path):
 @pytest.mark.parametrize(
     "extra_args",
     [
-        ["--probe=kprobe:try_to_free_pages"],
         ["--pid=1"],
     ],
 )
@@ -298,6 +319,7 @@ def test_cpa_monitor_accepts_perf_backend_with_bpf_aligned_options(tmp_path, ext
     [
         ["--kernel_stack"],
         ["--oneshot", "--output_prof", "cpa.prof"],
+        ["--probe=kprobe:try_to_free_pages"],
     ],
 )
 def test_cpa_monitor_bpf_aligned_modes_fall_back_to_perf(tmp_path, extra_args):

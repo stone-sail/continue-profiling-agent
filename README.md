@@ -281,7 +281,7 @@ Shared generic options:
 - `--offcpu_period <N>`: on the perf backend with `--offcpu`, capture one off-CPU stack every N context switches. Default: 100.
 - `--offcpu_stack_size <BYTES>`: on the perf backend with `--offcpu`, user stack bytes copied per off-CPU sample. Default: 16384.
 - `--perf_cgroup <auto|DIR>`: on the perf backend, sample only tasks in this perf_event cgroup. Defaults to `auto` (the cgroup of cpa) with `--offcpu`.
-- `--probe <SPEC>`: capture stacks only when a probe fires, using bpftrace-style syntax such as `kprobe:try_to_free_pages`.
+- `--probe <SPEC>`: capture stacks only when a probe fires, using bpftrace-style syntax such as `kprobe:try_to_free_pages`. On the perf backend kprobes need the kprobe PMU (4.17+) and tracepoints need a mounted tracefs; cannot be combined with `--offcpu`.
 - `--disable_sym, -S`: disable symbol parsing and keep raw addresses where applicable.
 - `--include_full_path`: keep full file paths in rendered frames where available.
 - `--strip_name_disable`: disable Go symbol-name stripping.

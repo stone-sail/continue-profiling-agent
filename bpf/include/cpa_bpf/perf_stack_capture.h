@@ -72,7 +72,12 @@ typedef void (*perf_switch_handler_fn)(const struct perf_switch_event *event, vo
  * @oncpu: open the on-CPU sampling events
  * @stack_size: user stack bytes dumped per on-CPU sample
  * @kernel_only: capture kernel call chains only, without user stacks
- * @handler: on-CPU sample callback
+ * @probe_type: perf event type of a probe (tracepoint or kprobe PMU); when
+ *              nonzero the probe replaces on-CPU sampling and every hit is
+ *              sampled
+ * @probe_config: perf event config of the probe
+ * @probe_func: kprobe function name, NULL for tracepoints
+ * @handler: on-CPU (or probe) sample callback
  * @offcpu_period: sample one stack every N context switches; 0 disables off-CPU
  * @offcpu_stack_size: user stack bytes dumped per off-CPU sample
  * @offcpu_handler: off-CPU (context switch) sample callback
@@ -87,6 +92,9 @@ struct perf_stack_capture_opts {
 	bool oncpu;
 	unsigned int stack_size;
 	bool kernel_only;
+	unsigned int probe_type;
+	unsigned long long probe_config;
+	const char *probe_func;
 	perf_event_handler_fn handler;
 	unsigned int offcpu_period;
 	unsigned int offcpu_stack_size;

@@ -63,7 +63,7 @@ ARG_DEFINE("ring_size_mb", NO_SINGLE_NAME, "ring buffer size in MiB when datapat
 	ARG_DEFINE("disable_sym", 'S', "disable symbol parsing and keep raw addresses where applicable.", false),
 	ARG_DEFINE("include_full_path", NO_SINGLE_NAME, "keep full file paths in rendered stack frames where available.", false),
 	ARG_DEFINE("strip_name_disable", NO_SINGLE_NAME, "disable Go symbol name stripping.", false),
-	ARG_DEFINE("backend", NO_SINGLE_NAME, "sampling backend to use: bpf or perf. perf has no --probe or IRQOFF records.", true),
+	ARG_DEFINE("backend", NO_SINGLE_NAME, "sampling backend to use: bpf or perf. perf has no IRQOFF records.", true),
 	ARG_DEFINE("oneshot", NO_SINGLE_NAME, "write a single one-shot profile instead of rotating store directories.", false),
 
 	/* show */
@@ -94,7 +94,7 @@ ARG_DEFINE("ring_size_mb", NO_SINGLE_NAME, "ring buffer size in MiB when datapat
 	ARG_DEFINE("offcpu_stack_size", NO_SINGLE_NAME, "perf backend with offcpu: user stack bytes copied per off-CPU sample.", true),
 	ARG_DEFINE("perf_cgroup", NO_SINGLE_NAME, "perf backend: scope sampling to a perf_event cgroup directory, or auto for the cgroup of cpa. Defaults to auto with offcpu.", true),
 	ARG_DEFINE("max_queue_size", 'm', "maximum in-memory stack event queue length before backpressure.", true),
-	ARG_DEFINE("probe", NO_SINGLE_NAME, "capture stacks only when this probe fires, using bpftrace-style syntax such as 'kprobe:try_to_free_pages' or 'tracepoint:vmscan:mm_shrink_slab_start'. Requires the BPF backend.", true),
+	ARG_DEFINE("probe", NO_SINGLE_NAME, "capture stacks only when this probe fires, using bpftrace-style syntax such as 'kprobe:try_to_free_pages' or 'tracepoint:vmscan:mm_shrink_slab_start'. The perf backend needs the kprobe PMU for kprobes and a mounted tracefs for tracepoints.", true),
 
 };
 

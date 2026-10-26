@@ -23,7 +23,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <linux/perf_event.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -46,6 +48,10 @@ struct perf_capture_config {
 	bool kernel_only;
 	/* thread comm to keep, truncated like the kernel comm; empty keeps all */
 	char comm[TASK_COMM_LEN];
+	/* --probe resolved to a perf event; probe_type 0 means no probe */
+	unsigned int probe_type;
+	unsigned long long probe_config;
+	char probe_func[256];
 };
 
 enum cpa_capture_state { STACK_PROCESS_STATE_INIT = 0, STACK_PROCESS_STATE_PAUSE, STACK_PROCESS_STATE_RUNNING, STACK_PROCESS_STATE_EXIT };
@@ -448,6 +454,94 @@ static int perf_cgroup_open(const char *spec)
 	return fd;
 }
 
+static int perf_read_sysfs_line(const char *path, char *buf, size_t buf_sz)
+{
+	FILE *fp = fopen(path, "r");
+
+	if (!fp)
+		return -errno;
+	if (!fgets(buf, buf_sz, fp)) {
+		fclose(fp);
+		return -EIO;
+	}
+	fclose(fp);
+	buf[strcspn(buf, "\n")] = '\0';
+
+	return 0;
+}
+
+static int perf_probe_resolve_tracepoint(const char *group, const char *name)
+{
+	const char *bases[] = { "/sys/kernel/tracing/events", "/sys/kernel/debug/tracing/events" };
+	char path[PATH_MAX], buf[64];
+
+	for (size_t i = 0; i < sizeof(bases) / sizeof(bases[0]); i++) {
+		snprintf(path, sizeof(path), "%s/%s/%s/id", bases[i], group, name);
+		if (perf_read_sysfs_line(path, buf, sizeof(buf)) == 0) {
+			perf_capture_config.probe_type = PERF_TYPE_TRACEPOINT;
+			perf_capture_config.probe_config = strtoull(buf, NULL, 10);
+			return 0;
+		}
+	}
+
+	CLI_ERROR("Failed to find tracepoint %s:%s; is tracefs mounted at /sys/kernel/tracing?", group, name);
+	return -ENOENT;
+}
+
+/* kprobe PMU (4.17+): type and retprobe bit come from sysfs. */
+static int perf_probe_resolve_kprobe(const char *func, bool retprobe)
+{
+	char buf[64];
+	int bit = 0;
+
+	if (perf_read_sysfs_line("/sys/bus/event_source/devices/kprobe/type", buf, sizeof(buf))) {
+		CLI_ERROR("kprobe PMU is not available, cannot attach perf kprobe %s", func);
+		return -ENOENT;
+	}
+	perf_capture_config.probe_type = strtoul(buf, NULL, 10);
+	perf_capture_config.probe_config = 0;
+
+	if (retprobe) {
+		if (perf_read_sysfs_line("/sys/bus/event_source/devices/kprobe/format/retprobe", buf, sizeof(buf)) || sscanf(buf, "config:%d", &bit) != 1) {
+			CLI_ERROR("kprobe PMU does not support kretprobe");
+			return -ENOENT;
+		}
+		perf_capture_config.probe_config = 1ULL << bit;
+	}
+	snprintf(perf_capture_config.probe_func, sizeof(perf_capture_config.probe_func), "%s", func);
+
+	return 0;
+}
+
+/* Same syntax as the bpf backend: kprobe:F, kretprobe:F, tracepoint:G:N. */
+static int perf_probe_resolve(const char *spec)
+{
+	char copy[256];
+	char *saveptr = NULL;
+	char *type, *target, *subtype;
+
+	perf_capture_config.probe_type = 0;
+	perf_capture_config.probe_config = 0;
+	perf_capture_config.probe_func[0] = '\0';
+
+	if (snprintf(copy, sizeof(copy), "%s", spec) >= (int)sizeof(copy)) {
+		CLI_ERROR("probe specification is too long");
+		return -ENAMETOOLONG;
+	}
+
+	type = strtok_r(copy, ":", &saveptr);
+	target = strtok_r(NULL, ":", &saveptr);
+	subtype = strtok_r(NULL, ":", &saveptr);
+
+	if (type && target && (strcmp(type, "kprobe") == 0 || strcmp(type, "kretprobe") == 0))
+		return perf_probe_resolve_kprobe(target, strcmp(type, "kretprobe") == 0);
+	if (type && target && subtype && strcmp(type, "tracepoint") == 0)
+		return perf_probe_resolve_tracepoint(target, subtype);
+
+	CLI_ERROR("Invalid probe %s; use kprobe:<func>, kretprobe:<func> or tracepoint:<group>:<name>", spec);
+	return -EINVAL;
+}
+
 /* The kernfs file handle of a cgroup directory is its cgroup id. */
 static unsigned long perf_cgroup_id(int cgroup_fd)
 {
@@ -503,11 +597,16 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 	atomic_init(&capture_state, STACK_PROCESS_STATE_INIT);
 
 	const char *probe = get_arg_by_name(ctx, "probe");
+	bool probe_enabled = !cli_arg_is_null_default(probe);
 
-	if (!cli_arg_is_null_default(probe)) {
-		CLI_ERROR("probe only supports the bpf backend");
+	if (probe_enabled && atoi(get_arg_by_name(ctx, "offcpu"))) {
+		CLI_ERROR("--probe cannot be combined with --offcpu");
 		return CPA_INIT_FAILED;
 	}
+	if (probe_enabled && perf_probe_resolve(probe) < 0)
+		return CPA_INIT_FAILED;
+	if (!probe_enabled)
+		perf_capture_config.probe_type = 0;
 
 	perf_capture_config.freq = atoi(get_arg_by_name(ctx, "freq"));
 	if (perf_capture_config.freq > 99 || perf_capture_config.freq < 9) {
@@ -587,6 +686,9 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 		.oncpu = oncpu,
 		.stack_size = stack_size,
 		.kernel_only = perf_capture_config.kernel_only,
+		.probe_type = perf_capture_config.probe_type,
+		.probe_config = perf_capture_config.probe_config,
+		.probe_func = perf_capture_config.probe_func[0] ? perf_capture_config.probe_func : NULL,
 		.handler = perf_capture_handler,
 		.offcpu_period = perf_capture_config.offcpu_period,
 		.offcpu_stack_size = perf_capture_config.offcpu_stack_size,

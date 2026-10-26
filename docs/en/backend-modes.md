@@ -86,8 +86,10 @@ selected mode.
 CPA rejects the request if perf-only mode is asked to carry options that perf
 does not implement.
 
-Only `--probe` is rejected now. `--oneshot`, `--comm`, `--kernel_stack` and
-`--stack_size` keep the BPF semantics on the perf backend; `--comm` filters by
+The perf backend only rejects `--probe` combined with `--offcpu`. `--oneshot`,
+`--comm`, `--kernel_stack`, `--stack_size` and `--probe` keep the BPF semantics
+on the perf backend; `--probe` uses the kprobe PMU (4.17+) for kprobes and
+kretprobes and needs a mounted tracefs for tracepoints; `--comm` filters by
 thread comm in userspace, so the kernel still copies stacks of other threads
 and `--perf_cgroup` is recommended to narrow the scope.
 
@@ -124,10 +126,9 @@ Requests whose semantics match on both backends can fall back. In practice that 
 
 - `backend=bpf`
 - no `--offcpu`
-- no `--probe`
 - no `--pid`
 
-`--oneshot`, `--comm`, `--kernel_stack` and `--stack_size` do not block fallback.
+`--oneshot`, `--comm`, `--kernel_stack`, `--stack_size` and `--probe` do not block fallback.
 
 When this request fails the BPF preflight, CPA will:
 
@@ -141,12 +142,10 @@ When this request fails the BPF preflight, CPA will:
 CPA hard-fails when BPF is unavailable for any of these modes:
 
 - `--offcpu`
-- `--probe`
 - `--pid`
 
-`--probe` is BPF-only; perf supports `--pid` and `--offcpu`, but in a different
-pid namespace and with a different off-CPU mechanism, so neither falls back
-automatically.
+perf supports `--pid` and `--offcpu`, but in a different pid namespace and with
+a different off-CPU mechanism, so neither falls back automatically.
 
 ## Actual perf Backend Limits
 
@@ -158,7 +157,6 @@ The current perf backend only promises:
 
 The current perf backend does not provide:
 
-- `probe`
 - IRQOFF records
 
 Also, unlike the BPF path, the current perf path does not populate `cgroup_id`
@@ -180,7 +178,7 @@ WARNING: BPF capability check failed: <reason>. Falling back to perf backend; pe
 When the request relies on BPF-only semantics, CPA emits an error like:
 
 ```text
-BPF capability check failed: <reason>. Requested mode requires BPF backend and cannot fall back to perf; perf has no --probe and different --pid/--offcpu semantics.
+BPF capability check failed: <reason>. Requested mode requires BPF backend and cannot fall back to perf; perf uses different --pid/--offcpu semantics.
 ```
 
 ## Practical Guidance
@@ -190,7 +188,6 @@ BPF capability check failed: <reason>. Requested mode requires BPF backend and c
 Use BPF explicitly when you need:
 
 - kprobe-based off-CPU
-- `--probe`
 - in-kernel pid/comm filtering (perf filters in userspace)
 - IRQOFF records
 

@@ -116,7 +116,7 @@ void cpa_stat_monitor_destroy(void *worker_ctx)
 
 void cpa_timer_fn(void *worker_ctx)
 {
-	int dir_size = 0;
+	long dir_size = 0;
 
 	struct unwinder_stat unwind_stat;
 	cpa_get_unwinder_stat(&unwind_stat);
@@ -152,7 +152,7 @@ void cpa_timer_fn(void *worker_ctx)
 			   unwind_stat.sample_backtrace_times_fp, unwind_stat.sample_backtrace_times_dwarf, unwind_stat.sample_backtrace_times_fp_better, statistics->pid_ctx_count, statistics->pid_ctx_alloc_count, statistics->elf_ctx_count,
 			   statistics->elf_ctx_alloc_count);
 		CLI_OUTPUT("Detailed: Symbols Mem Size: %.2f KB | CFI FDE Size: %.2f KB | CFI Data Size %.2f KB", statistics->symbols_mem_size / 1024.0, statistics->cfi_mem_size / 1024.0, statistics->cfi_data_mem_size / 1024.0);
-		CLI_OUTPUT("File  Queue Len: %d Pid Exit Queue Len: %d Store Dir: %s Total Size: %d KB", 0, 0, dir_info ? dir_info->store_dir : "NULL", dir_size / 1024);
+		CLI_OUTPUT("File  Queue Len: %d Pid Exit Queue Len: %d Store Dir: %s Total Size: %ld KB", 0, 0, dir_info ? dir_info->store_dir : "NULL", dir_size / 1024);
 		CLI_OUTPUT("NO BPF Pid Tracker: tracked pid num: %d retire pid num: %d", pid_tracker_stat.tracked_pid_count, pid_tracker_stat.retired_pid_count);
 		CLI_OUTPUT("Lost Events: bpf perf-buffer=%llu perf mmap=%llu", (unsigned long long)bpf_capture_stat.lost_events, (unsigned long long)perf_capture_stat.lost_events);
 		CLI_OUTPUT("RSS   Anon Size: %ld KB   File Size: %ld KB    Total Size: %ld KB", rss.rss_anon, rss.rss_file, rss.rss_sum);
@@ -162,12 +162,13 @@ void cpa_timer_fn(void *worker_ctx)
 		cpa_print_bpf_exec_time_dist();
 	}
 
-	if (usage->memory_usage_idsarray + usage->memory_usage_strarray + usage->memory_usage_idsmap + usage->memory_usage_strmap > 1024 * 1024 * cpa_stat.max_cache_size_mb) {
+	if (usage->memory_usage_idsarray + usage->memory_usage_strarray + usage->memory_usage_idsmap + usage->memory_usage_strmap > 1024ULL * 1024 * cpa_stat.max_cache_size_mb) {
 		cpa_runtime_need_restart();
 		return;
 	}
 
-	if (dir_info && dir_size > dir_info->store_dir_max_usage * 1024 * 1024) {
+	/* MB limits above 2047 overflow int arithmetic and would restart every tick */
+	if (dir_info && dir_size > (long)dir_info->store_dir_max_usage * 1024 * 1024) {
 		cpa_runtime_need_restart();
 		return;
 	}

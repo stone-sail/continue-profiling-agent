@@ -289,3 +289,22 @@ def test_cpa_monitor_accepts_perf_backend_with_pid(tmp_path):
     full_output = f"{stdout}{stderr}".lower()
     assert return_code == 0
     assert "require bpf backend" not in full_output
+
+
+def test_cpa_monitor_store_limit_above_2gb_does_not_restart_loop(tmp_path):
+    # 7168 MB / 3 days = 2389 MB per directory, which used to overflow int
+    stdout, stderr, return_code = run_command(
+        [
+            "monitor",
+            "--backend=perf",
+            "--freq=49",
+            "--duration=3",
+            "--persistent_day=3",
+            "--store_dir",
+            str(tmp_path),
+        ]
+    )
+
+    full_output = f"{stdout}{stderr}"
+    assert return_code == 0
+    assert full_output.count("set dir to") == 1

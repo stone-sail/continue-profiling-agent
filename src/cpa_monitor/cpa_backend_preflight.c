@@ -108,6 +108,18 @@ static int cpa_probe_helper(enum bpf_prog_type prog_type, enum bpf_func_id helpe
 	return -EOPNOTSUPP;
 }
 
+/*
+ * libbpf rewrites bpf_probe_read_{kernel,user}() calls to bpf_probe_read()
+ * at load time on kernels older than 5.5, so the legacy helper is enough.
+ */
+static int cpa_probe_read_helper(enum bpf_prog_type prog_type, enum bpf_func_id helper_id, const char *prog_name, const char *helper_name, char *reason, size_t reason_sz)
+{
+	if (libbpf_probe_bpf_helper(prog_type, helper_id, NULL) > 0)
+		return 0;
+
+	return cpa_probe_helper(prog_type, BPF_FUNC_probe_read, prog_name, helper_name, reason, reason_sz);
+}
+
 static int cpa_probe_custom_btf(const char *btf_path, char *reason, size_t reason_sz)
 {
 	struct btf *btf;
@@ -240,11 +252,11 @@ static int cpa_probe_stack_helpers(enum bpf_prog_type prog_type, const char *pro
 	if (ret)
 		return ret;
 
-	ret = cpa_probe_helper(prog_type, BPF_FUNC_probe_read_user, prog_name, "bpf_probe_read_user", reason, reason_sz);
+	ret = cpa_probe_read_helper(prog_type, BPF_FUNC_probe_read_user, prog_name, "bpf_probe_read_user", reason, reason_sz);
 	if (ret)
 		return ret;
 
-	ret = cpa_probe_helper(prog_type, BPF_FUNC_probe_read_kernel, prog_name, "bpf_probe_read_kernel", reason, reason_sz);
+	ret = cpa_probe_read_helper(prog_type, BPF_FUNC_probe_read_kernel, prog_name, "bpf_probe_read_kernel", reason, reason_sz);
 	if (ret)
 		return ret;
 

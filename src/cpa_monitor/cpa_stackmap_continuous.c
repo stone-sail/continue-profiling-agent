@@ -5,6 +5,7 @@
 #include "cli.h"
 #include "cli_config.h"
 #include "cpa_unwinder.h"
+#include <string.h>
 #include <sys/sysinfo.h>
 
 #define CPA_TIMEWHEEL_HOLD_MS 10000ULL
@@ -73,10 +74,13 @@ static void save_monitor_config(void *ctx)
 	ADD_CONFIG(kernel_stack);
 	ADD_CONFIG(stack_size);
 
-	/* Readers divide counts by freq unless the store says they are in us. */
-	if (atoi(get_arg_by_name(ctx, "with_offcpu"))) {
+	/*
+	 * Readers divide counts by freq unless the store says they are in us,
+	 * which perf off-CPU stores are; bpf off-CPU stores keep their own unit.
+	 */
+	if (atoi(get_arg_by_name(ctx, "offcpu")) && strcmp(get_arg_by_name(ctx, "backend"), "perf") == 0) {
 		add_config_item(config, "count_unit", "us");
-		ADD_CONFIG(with_offcpu);
+		ADD_CONFIG(offcpu);
 		ADD_CONFIG(offcpu_period);
 	}
 

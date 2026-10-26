@@ -409,11 +409,10 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 
 	atomic_init(&capture_state, STACK_PROCESS_STATE_INIT);
 
-	int offcpu = atoi(get_arg_by_name(ctx, "offcpu"));
 	const char *probe = get_arg_by_name(ctx, "probe");
 
-	if (offcpu || !cli_arg_is_null_default(probe)) {
-		CLI_ERROR("offcpu and probe only support on bpf backend");
+	if (!cli_arg_is_null_default(probe)) {
+		CLI_ERROR("probe only supports the bpf backend");
 		return CPA_INIT_FAILED;
 	}
 
@@ -430,7 +429,8 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 	}
 	perf_capture_config.pid = pid;
 
-	bool with_offcpu = atoi(get_arg_by_name(ctx, "with_offcpu")) != 0;
+	/* Unlike bpf (off-CPU only), perf collects off-CPU next to on-CPU. */
+	bool with_offcpu = atoi(get_arg_by_name(ctx, "offcpu")) != 0;
 	int offcpu_period = atoi(get_arg_by_name(ctx, "offcpu_period"));
 	int offcpu_stack_size = atoi(get_arg_by_name(ctx, "offcpu_stack_size"));
 	if (with_offcpu && offcpu_period <= 0) {

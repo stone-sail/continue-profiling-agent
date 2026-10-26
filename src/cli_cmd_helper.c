@@ -84,15 +84,14 @@ ARG_DEFINE("ring_size_mb", NO_SINGLE_NAME, "ring buffer size in MiB when datapat
 	ARG_DEFINE("target_comm", NO_SINGLE_NAME, "filter to one process group comm.", true),
 	ARG_DEFINE("target_pid", NO_SINGLE_NAME, "filter to one pid.", true),
 	ARG_DEFINE("target_env", NO_SINGLE_NAME, "filter to one recorded env value.", true),
-	ARG_DEFINE("target_state", NO_SINGLE_NAME, "filter stores collected with with_offcpu: all, on (on-CPU only) or off (off-CPU only).", true),
+	ARG_DEFINE("target_state", NO_SINGLE_NAME, "filter stores collected by the perf backend with offcpu: all, on (on-CPU only) or off (off-CPU only).", true),
 	ARG_DEFINE("split_path", NO_SINGLE_NAME, "export the selected time range as raw split files into this directory.", true),
 
 	/* profile */
-	ARG_DEFINE("offcpu", 'u', "collect off-CPU samples. Requires the BPF backend.", false),
-	ARG_DEFINE("with_offcpu", NO_SINGLE_NAME, "collect off-CPU samples alongside on-CPU samples in one store weighted in microseconds. Requires the perf backend.", false),
-	ARG_DEFINE("offcpu_period", NO_SINGLE_NAME, "with_offcpu: capture one off-CPU stack every N context switches.", true),
-	ARG_DEFINE("offcpu_stack_size", NO_SINGLE_NAME, "with_offcpu: user stack bytes copied per off-CPU sample.", true),
-	ARG_DEFINE("perf_cgroup", NO_SINGLE_NAME, "perf backend: scope sampling to a perf_event cgroup directory, or auto for the cgroup of cpa. Defaults to auto with with_offcpu.", true),
+	ARG_DEFINE("offcpu", 'u', "collect off-CPU samples. bpf backend: off-CPU only; perf backend: alongside on-CPU in one store counted in microseconds.", false),
+	ARG_DEFINE("offcpu_period", NO_SINGLE_NAME, "perf backend with offcpu: capture one off-CPU stack every N context switches.", true),
+	ARG_DEFINE("offcpu_stack_size", NO_SINGLE_NAME, "perf backend with offcpu: user stack bytes copied per off-CPU sample.", true),
+	ARG_DEFINE("perf_cgroup", NO_SINGLE_NAME, "perf backend: scope sampling to a perf_event cgroup directory, or auto for the cgroup of cpa. Defaults to auto with offcpu.", true),
 	ARG_DEFINE("max_queue_size", 'm', "maximum in-memory stack event queue length before backpressure.", true),
 	ARG_DEFINE("probe", NO_SINGLE_NAME, "capture stacks only when this probe fires, using bpftrace-style syntax such as 'kprobe:try_to_free_pages' or 'tracepoint:vmscan:mm_shrink_slab_start'. Requires the BPF backend.", true),
 

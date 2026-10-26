@@ -59,11 +59,11 @@ The current implementation writes these keys:
 - `kernel_stack`
 - `stack_size`
 
-Stores collected with `--with_offcpu` also write:
+Stores collected by the perf backend with `--offcpu` also write:
 
 - `count_unit: us`: `stack.bin` counts are microseconds instead of samples;
   readers derive core usage as `count / 1000000` instead of `count / freq`
-- `with_offcpu`
+- `offcpu`
 - `offcpu_period`
 
 Readers ignore unknown keys in `conf` and continue with supported keys.

@@ -13,7 +13,7 @@ They are not equivalent.
 
 - `bpf` is the full backend. It supports continuous on-CPU sampling, `offcpu`,
   `probe`, one-shot export, BPF-side filtering, and IRQOFF records.
-- `perf` supports continuous on-CPU profiling, plus off-CPU alongside it with `--with_offcpu`.
+- `perf` supports continuous on-CPU profiling, plus off-CPU alongside it with `--offcpu` (on the BPF backend `--offcpu` collects off-CPU only).
 
 Because of that, CPA performs a backend preflight before the runtime starts and
 then chooses one of three outcomes:
@@ -89,11 +89,14 @@ does not implement.
 The current rejected combinations include:
 
 - `--oneshot`
-- `--offcpu`
 - `--probe`
 - `--comm`
 - `--kernel_stack`
 - non-default `--stack_size`
+
+`--backend=perf --offcpu` is accepted with different semantics: the perf backend
+collects off-CPU alongside on-CPU, while the BPF backend collects off-CPU only.
+BPF requests with `--offcpu` therefore never fall back to perf.
 
 `--backend=perf --pid <PID>` is accepted: the perf backend filters by pid/tid
 in userspace. The two backends use different pid namespaces: BPF matches pids
@@ -163,7 +166,7 @@ The current perf backend only promises:
 
 The current perf backend does not provide:
 
-- `offcpu`
+- off-CPU only collection (perf `--offcpu` always runs next to on-CPU)
 - `probe`
 - one-shot mode
 - BPF-side `comm/kernel_stack` filtering (`--pid` is filtered in userspace on
@@ -199,7 +202,7 @@ BPF capability check failed: <reason>. Requested mode requires BPF backend and c
 
 Use BPF explicitly when you need:
 
-- `offcpu`
+- off-CPU only collection, or kprobe-based off-CPU
 - `--probe`
 - one-shot mode
 - BPF-side filtering or kernel-stack-only semantics

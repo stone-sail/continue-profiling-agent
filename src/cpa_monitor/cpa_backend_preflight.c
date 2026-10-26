@@ -31,7 +31,6 @@ struct cpa_monitor_mode {
 	bool kernel_stack;
 	bool probe_enabled;
 	bool comm_filter;
-	bool with_offcpu;
 	bool perf_cgroup;
 };
 
@@ -50,7 +49,6 @@ static void cpa_mode_init(struct cpa_monitor_mode *mode, void *ctx)
 	mode->kernel_stack = atoi(get_arg_by_name(ctx, "kernel_stack")) != 0;
 	mode->probe_enabled = !cli_arg_is_null_default(mode->probe_name);
 	mode->comm_filter = !cli_arg_is_null_default(mode->comm);
-	mode->with_offcpu = atoi(get_arg_by_name(ctx, "with_offcpu")) != 0;
 	mode->perf_cgroup = !cli_arg_is_null_default(get_arg_by_name(ctx, "perf_cgroup"));
 }
 
@@ -413,32 +411,29 @@ static int cpa_probe_bpf_runtime(const struct cpa_monitor_mode *mode, char *reas
 
 static bool cpa_perf_mode_uses_bpf_only_features(const struct cpa_monitor_mode *mode)
 {
-	return mode->oneshot || mode->offcpu || mode->probe_enabled || mode->kernel_stack || mode->comm_filter || mode->stack_size != 8192;
+	return mode->oneshot || mode->probe_enabled || mode->kernel_stack || mode->comm_filter || mode->stack_size != 8192;
 }
 
 /*
- * --pid is accepted by both backends but with different pid namespace
- * semantics: BPF matches init-namespace pids, perf matches pids in the pid
- * namespace of the cpa process. Never switch backends silently under --pid.
+ * --pid and --offcpu are accepted by both backends with different semantics:
+ * BPF matches init-namespace pids and collects off-CPU only, perf matches
+ * pids in the pid namespace of cpa and collects off-CPU alongside on-CPU.
+ * Never switch backends silently under either option.
  */
 static bool cpa_bpf_mode_can_fallback_to_perf(const struct cpa_monitor_mode *mode)
 {
-	return !cpa_perf_mode_uses_bpf_only_features(mode) && mode->pid <= 0;
+	return !cpa_perf_mode_uses_bpf_only_features(mode) && mode->pid <= 0 && !mode->offcpu;
 }
 
 static int cpa_reject_perf_backend(const struct cpa_monitor_mode *mode)
 {
-	if (strcmp(mode->backend, "perf") != 0 && (mode->with_offcpu || mode->perf_cgroup)) {
-		CLI_ERROR("--with_offcpu and --perf_cgroup require --backend perf; the bpf backend uses --offcpu instead");
-		return -EINVAL;
-	}
-	if (mode->with_offcpu && mode->offcpu) {
-		CLI_ERROR("--with_offcpu collects off-CPU on the perf backend; do not combine it with --offcpu");
+	if (strcmp(mode->backend, "perf") != 0 && mode->perf_cgroup) {
+		CLI_ERROR("--perf_cgroup requires --backend perf");
 		return -EINVAL;
 	}
 
 	if (!strcmp(mode->backend, "perf") && cpa_perf_mode_uses_bpf_only_features(mode)) {
-		CLI_ERROR("perf backend only supports on-cpu continuous profiling; --oneshot, --offcpu, --probe, --comm, --kernel_stack, and non-default --stack_size require bpf backend");
+		CLI_ERROR("perf backend only supports continuous on-cpu and off-cpu profiling; --oneshot, --probe, --comm, --kernel_stack, and non-default --stack_size require bpf backend");
 		return -EINVAL;
 	}
 

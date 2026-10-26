@@ -68,13 +68,13 @@ sudo ./build/bin/cpa monitor \
   --store_dir /var/log/cpa
 ```
 
-perf 后端同时采集 on-CPU 和 off-CPU（适合容器内运行）：
+perf 后端同时采集 on-CPU 和 off-CPU（适合容器内运行；和 BPF 后端不同，BPF 的 `--offcpu` 只采 off-CPU）：
 
 ```bash
 sudo ./build/bin/cpa monitor \
   --backend perf \
   --pid 12345 \
-  --with_offcpu \
+  --offcpu \
   --store_dir /var/log/cpa
 ```
 
@@ -123,7 +123,7 @@ sudo ./build/bin/cpa monitor \
 - `--target_env <value>`
 - `--target_cgroup_id <id>`
 - `--target_cpu <set>`
-- `--target_state <all|on|off>`：对 `--with_offcpu` 采集的 store 只导出 on-CPU 或 off-CPU 栈
+- `--target_state <all|on|off>`：对 perf 后端 `--offcpu` 采集的 store 只导出 on-CPU 或 off-CPU 栈
 
 其他常用参数：
 

@@ -73,13 +73,14 @@ sudo ./build/bin/cpa monitor \
   --store_dir /var/log/cpa
 ```
 
-Perf backend collecting on-CPU and off-CPU together (works inside containers):
+Perf backend collecting on-CPU and off-CPU together (works inside containers;
+unlike the BPF backend, where `--offcpu` collects off-CPU only):
 
 ```bash
 sudo ./build/bin/cpa monitor \
   --backend perf \
   --pid 12345 \
-  --with_offcpu \
+  --offcpu \
   --store_dir /var/log/cpa
 ```
 
@@ -134,7 +135,7 @@ Common filtering options:
 - `--target_env <value>`
 - `--target_cgroup_id <id>`
 - `--target_cpu <set>`
-- `--target_state <all|on|off>`: for stores collected with `--with_offcpu`, export only on-CPU or only off-CPU stacks
+- `--target_state <all|on|off>`: for stores collected by the perf backend with `--offcpu`, export only on-CPU or only off-CPU stacks
 
 Other useful options:
 

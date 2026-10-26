@@ -277,6 +277,10 @@ Shared generic options:
 - `--comm, -n <NAME>`: capture tasks matching one comm/group-comm name. Requires the BPF backend.
 - `--kernel_stack, -K`: capture kernel-space stacks only. Requires the BPF backend.
 - `--offcpu, -u`: collect off-CPU samples. Only valid on the BPF backend.
+- `--with_offcpu`: on the perf backend, collect off-CPU samples alongside on-CPU samples in one store counted in microseconds.
+- `--offcpu_period <N>`: with `--with_offcpu`, capture one off-CPU stack every N context switches. Default: 100.
+- `--offcpu_stack_size <BYTES>`: with `--with_offcpu`, user stack bytes copied per off-CPU sample. Default: 16384.
+- `--perf_cgroup <auto|DIR>`: on the perf backend, sample only tasks in this perf_event cgroup. Defaults to `auto` (the cgroup of cpa) with `--with_offcpu`.
 - `--probe <SPEC>`: capture stacks only when a probe fires, using bpftrace-style syntax such as `kprobe:try_to_free_pages`.
 - `--disable_sym, -S`: disable symbol parsing and keep raw addresses where applicable.
 - `--include_full_path`: keep full file paths in rendered frames where available.
@@ -313,6 +317,7 @@ Shared generic options:
 - `--target_env <VALUE>`: filter to one recorded env value.
 - `--target_cgroup_id <ID>`: filter to one cgroup ID.
 - `--target_cpu <CPUSET>`: filter to CPUs in a standard CPU-set expression such as `1-3,5,7-9`.
+- `--target_state <all|on|off>`: for stores collected with `--with_offcpu`, export only on-CPU or only off-CPU stacks.
 
 ## Documentation
 

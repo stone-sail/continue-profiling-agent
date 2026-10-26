@@ -87,6 +87,14 @@ pub trait ProfileData: Send + Sync {
     fn metadata_for_ids(&self, ids: &[u32]) -> Option<Metadata>;
     fn ids_id_has_kernel(&self, ids_id: u32) -> bool;
 
+    /// Whether a stack was recorded off-CPU (waiting, not running).
+    fn ids_id_is_offcpu(&self, ids_id: u32) -> bool {
+        self.ids_for(ids_id)
+            .and_then(|ids| ids.get(1).copied())
+            .and_then(|sid| self.str_for(sid))
+            .is_some_and(|s| s.starts_with(crate::cpa::OFFCPU_MARKER))
+    }
+
     fn summary(&self) -> String {
         let c = self.config();
         format!(

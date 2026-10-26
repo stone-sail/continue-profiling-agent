@@ -12,7 +12,7 @@
 但它们并不是能力对等的两套实现。当前代码里的约束是：
 
 - `bpf` 是完整后端，支持 on-CPU 持续采样、`offcpu`、`probe`、one-shot、BPF 侧过滤，以及 IRQOFF 记录。
-- `perf` 只支持 on-CPU 持续采样。
+- `perf` 支持 on-CPU 持续采样，以及通过 `--with_offcpu` 同时采集 off-CPU。
 
 因此，CPA 在启动阶段会先做一次后端能力检查，再决定：
 

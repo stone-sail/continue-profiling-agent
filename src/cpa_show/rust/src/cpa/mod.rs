@@ -8,7 +8,7 @@ mod metadata;
 mod stackbin;
 mod utils;
 
-pub use config::Config;
+pub use config::{Config, OFFCPU_MARKER};
 pub use filters::{parse_cpu_set, Filter, FilterSet, FilterTarget, FilterValue};
 pub use maps::{IdsMap, StrMap};
 pub use metadata::{Metadata, MetadataParseError};
@@ -139,9 +139,9 @@ impl Store {
     }
 
     pub fn cpu_samples_per_cpu_per_record(&self) -> Option<f64> {
-        let freq = self.config.freq? as f64;
+        let per_core_second = self.config.counts_per_core_second()?;
         let interval = self.config.record_interval? as f64;
-        Some(freq * interval)
+        Some(per_core_second * interval)
     }
 
     /// Aggregate entries within a record range (sum by ids_id).
@@ -230,6 +230,10 @@ impl Store {
             let _ = self
                 .stack
                 .for_each_entry_in_record(&mut f, i, |ids_id, count| {
+                    // Waiting time is not CPU usage.
+                    if self.ids_is_offcpu(ids_id) {
+                        return Ok(());
+                    }
                     // Apply filters
                     if !filters.items.is_empty() {
                         if let Some(ids) = self.ids_for(ids_id) {
@@ -278,6 +282,13 @@ impl Store {
         }
         cache.insert(ids_id, has);
         has
+    }
+
+    fn ids_is_offcpu(&self, ids_id: u32) -> bool {
+        self.ids_for(ids_id)
+            .and_then(|ids| ids.get(1).copied())
+            .and_then(|sid| self.str_for(sid))
+            .is_some_and(|s| s.starts_with(OFFCPU_MARKER))
     }
 
     /// ids_id -> frame id list (from idsmap)

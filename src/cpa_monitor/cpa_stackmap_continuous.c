@@ -73,6 +73,13 @@ static void save_monitor_config(void *ctx)
 	ADD_CONFIG(kernel_stack);
 	ADD_CONFIG(stack_size);
 
+	/* Readers divide counts by freq unless the store says they are in us. */
+	if (atoi(get_arg_by_name(ctx, "with_offcpu"))) {
+		add_config_item(config, "count_unit", "us");
+		ADD_CONFIG(with_offcpu);
+		ADD_CONFIG(offcpu_period);
+	}
+
 	CLI_OUTPUT("write config to %s", config->config_path);
 
 	dump_config(config);

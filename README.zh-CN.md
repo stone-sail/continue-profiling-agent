@@ -258,6 +258,10 @@ taskset -c 0 libs/libgunwinder/bin/cfi_bench \
 - `--comm, -n <NAME>`：按 comm/group-comm 过滤采集对象。需要 BPF 后端。
 - `--kernel_stack, -K`：只采集内核态栈。需要 BPF 后端。
 - `--offcpu, -u`：采集 off-CPU 样本，只能与 BPF 后端一起使用。
+- `--with_offcpu`：perf 后端在采 on-CPU 的同时采 off-CPU，写入同一个 store，计数单位为微秒。
+- `--offcpu_period <N>`：`--with_offcpu` 时每 N 次上下文切换采一次 off-CPU 调用栈，默认 100。
+- `--offcpu_stack_size <BYTES>`：`--with_offcpu` 时每个 off-CPU 样本复制的用户栈字节数，默认 16384。
+- `--perf_cgroup <auto|DIR>`：perf 后端只采样指定 perf_event cgroup 内的任务；`--with_offcpu` 时默认 `auto`（cpa 自身所在 cgroup）。
 - `--probe <SPEC>`：仅在指定 probe 触发时采集栈，采用 bpftrace 风格语法，例如 `kprobe:try_to_free_pages`。
 - `--disable_sym, -S`：关闭符号解析，尽量保留原始地址。
 - `--include_full_path`：在可用时保留完整文件路径。
@@ -294,6 +298,7 @@ taskset -c 0 libs/libgunwinder/bin/cfi_bench \
 - `--target_env <VALUE>`：过滤到指定环境变量值。
 - `--target_cgroup_id <ID>`：过滤到指定 cgroup ID。
 - `--target_cpu <CPUSET>`：过滤到指定 CPU 集合，例如 `1-3,5,7-9`。
+- `--target_state <all|on|off>`：对 `--with_offcpu` 采集的 store 只导出 on-CPU 或 off-CPU 栈。
 
 ## 文档导航
 

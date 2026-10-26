@@ -11,7 +11,13 @@ pub struct Config {
     pub cpu_num: Option<u32>,
     pub freq: Option<u32>,
     pub record_interval: Option<u32>,
+    /// `us` when counts are microseconds (stores mixing on- and off-CPU);
+    /// absent when counts are on-CPU samples.
+    pub count_unit: Option<String>,
 }
+
+/// First frame after the metadata entry of an off-CPU stack.
+pub const OFFCPU_MARKER: &str = "<# OFFCPU SAMPLE";
 
 impl Config {
     pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
@@ -31,13 +37,23 @@ impl Config {
         let cpu_num = raw.get("cpu_num").and_then(|v| v.parse().ok());
         let freq = raw.get("freq").and_then(|v| v.parse().ok());
         let record_interval = raw.get("record_interval").and_then(|v| v.parse().ok());
+        let count_unit = raw.get("count_unit").cloned();
 
         Ok(Self {
             raw,
             cpu_num,
             freq,
             record_interval,
+            count_unit,
         })
+    }
+
+    /// Counts that add up to one core busy for one second.
+    pub fn counts_per_core_second(&self) -> Option<f64> {
+        if self.count_unit.as_deref() == Some("us") {
+            return Some(1_000_000.0);
+        }
+        self.freq.map(|f| f as f64).filter(|f| *f > 0.0)
     }
 }
 
@@ -61,5 +77,17 @@ mod tests {
         assert_eq!(c.freq, Some(99));
         assert_eq!(c.record_interval, Some(5));
         assert_eq!(c.raw.get("foo").unwrap(), "bar baz");
+    }
+
+    #[test]
+    fn counts_per_core_second_by_unit() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("conf");
+
+        fs::write(&p, "freq: 49\n").unwrap();
+        assert_eq!(Config::load(&p).unwrap().counts_per_core_second(), Some(49.0));
+
+        fs::write(&p, "freq: 49\ncount_unit: us\n").unwrap();
+        assert_eq!(Config::load(&p).unwrap().counts_per_core_second(), Some(1_000_000.0));
     }
 }

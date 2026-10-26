@@ -12,6 +12,7 @@
 #define CPA_BPF_PERF_STACK_CAPTURE_H
 
 #include <cpa_bpf/bpf_event.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #define MAX_STACK_DEPTH 127
@@ -45,6 +46,50 @@ struct perf_stack_event {
 typedef void (*perf_event_handler_fn)(struct perf_stack_event *event, void *data);
 
 /**
+ * struct perf_switch_event - one context switch record of a sampled task
+ * @time: switch timestamp in nanoseconds (perf clock)
+ * @pid: TGID in the pid namespace of the event opener
+ * @tid: TID in the pid namespace of the event opener
+ * @cpu: cpu the switch happened on
+ * @out: true for switch-out, false for switch-in
+ * @preempt: switch-out was a preemption (task still runnable)
+ */
+struct perf_switch_event {
+	unsigned long time;
+	unsigned int pid;
+	unsigned int tid;
+	unsigned int cpu;
+	bool out;
+	bool preempt;
+};
+
+typedef void (*perf_switch_handler_fn)(const struct perf_switch_event *event, void *data);
+
+/**
+ * struct perf_stack_capture_opts - perf backend capture configuration
+ * @sample_freq: on-CPU sampling frequency in Hz
+ * @cgroup_fd: perf_event cgroup directory fd to scope events to, or -1
+ * @handler: on-CPU sample callback
+ * @offcpu_period: sample one stack every N context switches; 0 disables off-CPU
+ * @offcpu_stack_size: user stack bytes dumped per off-CPU sample
+ * @offcpu_handler: off-CPU (context switch) sample callback
+ * @switch_handler: context switch record callback
+ * @handler_data: opaque pointer passed to every callback
+ *
+ * All callbacks run on the single capture poll thread.
+ */
+struct perf_stack_capture_opts {
+	int sample_freq;
+	int cgroup_fd;
+	perf_event_handler_fn handler;
+	unsigned int offcpu_period;
+	unsigned int offcpu_stack_size;
+	perf_event_handler_fn offcpu_handler;
+	perf_switch_handler_fn switch_handler;
+	void *handler_data;
+};
+
+/**
  * Opaque capture context.
  */
 struct perf_stack_capture_ctx;
@@ -61,6 +106,11 @@ struct perf_stack_capture_stats {
  * Register perf backend capture callbacks and return context.
  */
 struct perf_stack_capture_ctx *perf_setup_stack_capture_event(int sample_period, perf_event_handler_fn handler, void *handler_data);
+
+/**
+ * Start perf capture with on-CPU sampling and optional off-CPU sampling.
+ */
+struct perf_stack_capture_ctx *perf_setup_stack_capture(const struct perf_stack_capture_opts *opts);
 
 /**
  * Tear down perf capture context.

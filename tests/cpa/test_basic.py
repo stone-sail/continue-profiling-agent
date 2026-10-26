@@ -308,3 +308,51 @@ def test_cpa_monitor_store_limit_above_2gb_does_not_restart_loop(tmp_path):
     full_output = f"{stdout}{stderr}"
     assert return_code == 0
     assert full_output.count("set dir to") == 1
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["--backend=bpf", "--with_offcpu"],
+        ["--backend=bpf", "--perf_cgroup=auto"],
+        ["--backend=perf", "--with_offcpu", "--offcpu"],
+    ],
+)
+def test_cpa_monitor_rejects_invalid_with_offcpu_combinations(tmp_path, extra_args):
+    stdout, stderr, return_code = run_command(
+        ["monitor", "--duration=1", "--store_dir", str(tmp_path), *extra_args]
+    )
+
+    full_output = f"{stdout}{stderr}"
+    assert return_code != 0
+    assert "--with_offcpu" in full_output
+
+
+def test_cpa_monitor_perf_with_offcpu_writes_us_store(tmp_path):
+    stdout, stderr, return_code = run_command(
+        [
+            "monitor",
+            "--backend=perf",
+            "--with_offcpu",
+            "--freq=49",
+            "--duration=2",
+            "--store_dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert return_code == 0, f"{stdout}{stderr}"
+    confs = list(tmp_path.glob("cpa_*/conf"))
+    assert confs
+    conf = confs[0].read_text(encoding="utf-8")
+    assert "count_unit: us" in conf
+    assert "offcpu_period: 100" in conf
+
+
+def test_cpa_show_rejects_invalid_target_state(tmp_path):
+    stdout, stderr, return_code = run_command(
+        ["show", "--read", str(tmp_path), "--target_state=idle"]
+    )
+
+    assert return_code != 0
+    assert "target_state" in f"{stdout}{stderr}"

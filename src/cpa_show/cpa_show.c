@@ -28,6 +28,8 @@ static const char *target_comm;
 static const char *target_env;
 static unsigned long target_cgroup_id;
 static unsigned long target_pid;
+/* "all", "on" or "off": keep both, only on-CPU or only off-CPU stacks */
+static const char *target_state;
 static struct cpu_set cpu_set = { 0, NULL };
 static struct metadata cpa_meta_data;
 static struct cli_stackmap *flamegraph_map = NULL;
@@ -35,7 +37,7 @@ static FILE *flamegraph_output_fp = NULL;
 
 struct sub_cmd sub_cmd_cpa_show = {
 	.name = "show",
-	.arg_list = CPA_SHOW_CMDLINE "target_pid=0 target_comm=null target_env=null target_cgroup_id=0 target_cpu=all",
+	.arg_list = CPA_SHOW_CMDLINE "target_pid=0 target_comm=null target_env=null target_cgroup_id=0 target_cpu=all target_state=all",
 	.help_str = "[CPA] inspect stored profile data as flamegraph output or in the embedded TUI.",
 	.func = SUB_CMD_FUNC(cpa_show),
 };
@@ -145,6 +147,25 @@ static bool cpa_show_filter_func(struct metadata *data)
 		return true;
 
 	return false;
+}
+
+#define CPA_OFFCPU_MARKER "<# OFFCPU SAMPLE"
+
+/* Off-CPU stacks carry a marker frame right after the metadata entry. */
+static bool cpa_show_state_filtered(struct cli_stackmap_record_map *map, struct ids_hash *ids)
+{
+	struct str_hash *str = NULL;
+	bool offcpu = false;
+
+	if (strcmp(target_state, "all") == 0)
+		return false;
+
+	if (ids->ids_len > 1) {
+		HASH_FIND_INT(map->str, &ids->ids[1], str);
+		offcpu = str && strncmp(str->str, CPA_OFFCPU_MARKER, strlen(CPA_OFFCPU_MARKER)) == 0;
+	}
+
+	return strcmp(target_state, "off") == 0 ? !offcpu : offcpu;
 }
 
 static int cpa_show_render(void *ctx)
@@ -371,6 +392,9 @@ static int cpa_show_render(void *ctx)
 			if (cpa_show_filter_func(&cpa_meta_data))
 				continue;
 
+			if (cpa_show_state_filtered(map, ids))
+				continue;
+
 			cpa_flamegraph_input_metadata(&cpa_meta_data, general_show_flags);
 			if (show_thread_name)
 				cpa_flamegraph_input_stack(cpa_meta_data.comm);
@@ -443,6 +467,12 @@ int SUB_CMD_FUNC(cpa_show)(void *ctx)
 	target_comm = get_arg_by_name(ctx, "target_comm");
 	target_env = get_arg_by_name(ctx, "target_env");
 	target_pid = atoi(get_arg_by_name(ctx, "target_pid"));
+	target_state = get_arg_by_name(ctx, "target_state");
+
+	if (strcmp(target_state, "all") != 0 && strcmp(target_state, "on") != 0 && strcmp(target_state, "off") != 0) {
+		CLI_ERROR("Invalid target_state=%s (all|on|off)", target_state);
+		return -1;
+	}
 
 	if (cli_arg_is_null_default(target_env))
 		target_env = NULL;

@@ -34,9 +34,14 @@ struct perf_stack_capture_ctx {
 	size_t mmap_size;
 	int perf_cpu_num;
 	perf_event_handler_fn handler;
+	perf_event_handler_fn offcpu_handler;
+	perf_switch_handler_fn switch_handler;
 	void *handler_data;
 	int *pmu_fds;
 	void **mmap_bufs;
+	/* off-CPU context switch events; NULL when off-CPU is disabled */
+	int *off_fds;
+	void **off_mmap_bufs;
 	atomic_bool stop_thread;
 	pthread_t poll_thread;
 	int epoll_fd;
@@ -247,9 +252,36 @@ out:
 
 static char copy_buf[64 * 1024 + 4 * 1024];
 
-static void process_perf_data(struct perf_stack_capture_ctx *ctx, int cpu)
+#ifndef PERF_RECORD_MISC_SWITCH_OUT_PREEMPT
+#define PERF_RECORD_MISC_SWITCH_OUT_PREEMPT (1 << 14)
+#endif
+
+/*
+ * Switch records carry no payload of their own except next/prev pid on the
+ * cpu-wide variant; the switching task comes from the sample_id trailer,
+ * which for our sample_type is { u32 pid, tid; u64 time; u32 cpu, res; }.
+ */
+static bool parse_perf_switch_event(const struct perf_event_header *event_header, struct perf_switch_event *out)
 {
-	struct perf_event_mmap_page *header = ctx->mmap_bufs[cpu];
+	const size_t trailer_size = 2 * sizeof(unsigned int) + sizeof(unsigned long) + 2 * sizeof(unsigned int);
+	const unsigned char *trailer;
+
+	if (event_header->size < sizeof(*event_header) + trailer_size)
+		return false;
+
+	trailer = (const unsigned char *)event_header + event_header->size - trailer_size;
+	memcpy(&out->pid, trailer, sizeof(unsigned int));
+	memcpy(&out->tid, trailer + sizeof(unsigned int), sizeof(unsigned int));
+	memcpy(&out->time, trailer + 2 * sizeof(unsigned int), sizeof(unsigned long));
+	memcpy(&out->cpu, trailer + 2 * sizeof(unsigned int) + sizeof(unsigned long), sizeof(unsigned int));
+	out->out = event_header->misc & PERF_RECORD_MISC_SWITCH_OUT;
+	out->preempt = event_header->misc & PERF_RECORD_MISC_SWITCH_OUT_PREEMPT;
+
+	return true;
+}
+
+static void process_perf_data(struct perf_stack_capture_ctx *ctx, struct perf_event_mmap_page *header, perf_event_handler_fn handler)
+{
 	unsigned long data_tail;
 	unsigned long data_head;
 	long page_sz = sysconf(_SC_PAGESIZE);
@@ -282,8 +314,13 @@ static void process_perf_data(struct perf_stack_capture_ctx *ctx, int cpu)
 				if (event_header->size > sizeof(struct perf_event_header))
 					payload_size = event_header->size - sizeof(struct perf_event_header);
 				parse_perf_stack_event((void *)((unsigned char *)event_header + sizeof(struct perf_event_header)), sample_type, &global_sample, payload_size);
-				if (ctx->handler)
-					ctx->handler(&global_sample, ctx->handler_data);
+				if (handler)
+					handler(&global_sample, ctx->handler_data);
+			} else if (event_header->type == PERF_RECORD_SWITCH || event_header->type == PERF_RECORD_SWITCH_CPU_WIDE) {
+				struct perf_switch_event switch_event;
+
+				if (ctx->switch_handler && parse_perf_switch_event(event_header, &switch_event))
+					ctx->switch_handler(&switch_event, ctx->handler_data);
 			} else if (event_header->type == PERF_RECORD_LOST) {
 				struct {
 					uint64_t id;
@@ -317,44 +354,128 @@ static void *poll_event_thread(void *arg)
 
 	while (!atomic_load(&ctx->stop_thread)) {
 		usleep(ctx->sleep_us);
-		for (i = 0; i < ctx->perf_cpu_num; i++)
-			process_perf_data(ctx, i);
+		for (i = 0; i < ctx->perf_cpu_num; i++) {
+			process_perf_data(ctx, ctx->mmap_bufs[i], ctx->handler);
+			if (ctx->off_mmap_bufs)
+				process_perf_data(ctx, ctx->off_mmap_bufs[i], ctx->offcpu_handler);
+		}
 	}
 	return NULL;
 }
 
-struct perf_stack_capture_ctx *perf_setup_stack_capture_event(int sample_period, perf_event_handler_fn handler, void *handler_data)
+#if defined(__CPA_BPF_ARCH_arm64)
+#define PERF_STACK_CAPTURE_REGS_USER ((1UL << PERF_REG_ARM64_SP) | (1UL << PERF_REG_ARM64_PC) | (1UL << PERF_REG_ARM64_X29) | (1UL << PERF_REG_ARM64_LR))
+#else
+#define PERF_STACK_CAPTURE_REGS_USER ((1UL << PERF_REG_X86_SP) | (1UL << PERF_REG_X86_IP) | (1UL << PERF_REG_X86_BP))
+#endif
+
+/*
+ * Open one event per cpu, map its ring buffer and register it for polling.
+ * With a cgroup fd the kernel only counts tasks of that cgroup, so sampling
+ * inside a container does not pay for other workloads on the host.
+ */
+static int perf_open_cpu_events(struct perf_stack_capture_ctx *ctx, struct perf_event_attr *attr, int cgroup_fd, int **fds_out, void ***bufs_out)
+{
+	int *fds = calloc(ctx->perf_cpu_num, sizeof(int));
+	void **bufs = calloc(ctx->perf_cpu_num, sizeof(void *));
+	unsigned long flags = cgroup_fd >= 0 ? PERF_FLAG_PID_CGROUP : 0;
+	int pid = cgroup_fd >= 0 ? cgroup_fd : -1;
+	int cpu;
+
+	*fds_out = fds;
+	*bufs_out = bufs;
+	if (!fds || !bufs) {
+		BPF_ERR("failed to alloc perf event arrays\n");
+		return -1;
+	}
+
+	for (cpu = 0; cpu < ctx->perf_cpu_num; cpu++)
+		fds[cpu] = -1;
+
+	for (cpu = 0; cpu < ctx->perf_cpu_num; cpu++) {
+		fds[cpu] = syscall(__NR_perf_event_open, attr, pid, cpu, -1, flags);
+		if (fds[cpu] < 0) {
+			BPF_ERR("failed to open perf event type=%u config=%llu cpu=%d cgroup=%d: %s\n", attr->type, (unsigned long long)attr->config, cpu, cgroup_fd, strerror(errno));
+			return -1;
+		}
+
+		bufs[cpu] = mmap(NULL, ctx->mmap_size + sysconf(_SC_PAGESIZE), PROT_READ | PROT_WRITE, MAP_SHARED, fds[cpu], 0);
+		if (bufs[cpu] == MAP_FAILED) {
+			BPF_ERR("failed to mmap perf buffer cpu=%d: %s\n", cpu, strerror(errno));
+			bufs[cpu] = NULL;
+			return -1;
+		}
+
+		struct epoll_event ev;
+		ev.events = EPOLLIN;
+		ev.data.u32 = cpu;
+		if (epoll_ctl(ctx->epoll_fd, EPOLL_CTL_ADD, fds[cpu], &ev) < 0) {
+			BPF_ERR("failed to add perf fd to epoll cpu=%d: %s\n", cpu, strerror(errno));
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static int perf_enable_cpu_events(struct perf_stack_capture_ctx *ctx, int *fds)
+{
+	for (int cpu = 0; cpu < ctx->perf_cpu_num; cpu++) {
+		if (fds[cpu] < 0)
+			continue;
+		if (ioctl(fds[cpu], PERF_EVENT_IOC_RESET, 0) < 0 || ioctl(fds[cpu], PERF_EVENT_IOC_ENABLE, 0) < 0) {
+			BPF_ERR("failed to enable perf event cpu=%d: %s\n", cpu, strerror(errno));
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
+static void perf_close_cpu_events(struct perf_stack_capture_ctx *ctx, int *fds, void **bufs)
+{
+	for (int i = 0; fds && i < ctx->perf_cpu_num; i++) {
+		if (fds[i] >= 0)
+			close(fds[i]);
+	}
+	for (int i = 0; bufs && i < ctx->perf_cpu_num; i++) {
+		if (bufs[i])
+			munmap(bufs[i], ctx->mmap_size + sysconf(_SC_PAGESIZE));
+	}
+	free(fds);
+	free(bufs);
+}
+
+struct perf_stack_capture_ctx *perf_setup_stack_capture(const struct perf_stack_capture_opts *opts)
 {
 	struct perf_stack_capture_ctx *ctx;
-	int cpu;
 	const int page_cnt = PERF_STACK_CAPTURE_PAGE_CNT;
 
 	ctx = calloc(1, sizeof(*ctx));
 	if (!ctx)
 		return NULL;
 
+	ctx->epoll_fd = -1;
 	ctx->perf_cpu_num = get_nprocs();
 	ctx->mmap_page_cnt = page_cnt;
 	ctx->mmap_size = ctx->mmap_page_cnt * sysconf(_SC_PAGESIZE);
-	ctx->handler = handler;
-	ctx->handler_data = handler_data;
+	ctx->handler = opts->handler;
+	ctx->offcpu_handler = opts->offcpu_handler;
+	ctx->switch_handler = opts->switch_handler;
+	ctx->handler_data = opts->handler_data;
 
-	ctx->sleep_us = 1000 * 1000 / sample_period;
+	ctx->sleep_us = 1000 * 1000 / opts->sample_freq;
 	atomic_init(&ctx->lost_events, 0);
 
 	struct perf_event_attr attr = {
 		.type = PERF_TYPE_SOFTWARE,
 		.size = sizeof(struct perf_event_attr),
 		.config = PERF_COUNT_SW_CPU_CLOCK,
-		.sample_freq = sample_period,
+		.sample_freq = opts->sample_freq,
 		.freq = 1,
 		.sample_type = sample_type,
 		.sample_stack_user = MAX_USER_STACK_DUMP_SIZE,
-#if defined(__CPA_BPF_ARCH_arm64)
-		.sample_regs_user = ((1UL << PERF_REG_ARM64_SP) | (1UL << PERF_REG_ARM64_PC) | (1UL << PERF_REG_ARM64_X29) | (1UL << PERF_REG_ARM64_LR)),
-#else
-		.sample_regs_user = ((1UL << PERF_REG_X86_SP) | (1UL << PERF_REG_X86_IP) | (1UL << PERF_REG_X86_BP)),
-#endif
+		.sample_regs_user = PERF_STACK_CAPTURE_REGS_USER,
 		.disabled = 1,
 		.exclude_kernel = 0,
 		.exclude_user = 0,
@@ -362,54 +483,42 @@ struct perf_stack_capture_ctx *perf_setup_stack_capture_event(int sample_period,
 		.exclude_idle = 1,
 	};
 
-	ctx->pmu_fds = calloc(ctx->perf_cpu_num, sizeof(int));
-	if (!ctx->pmu_fds) {
-		BPF_ERR("failed to alloc pmu_fds\n");
-		goto error;
-	}
-	ctx->mmap_bufs = calloc(ctx->perf_cpu_num, sizeof(void *));
-	if (!ctx->mmap_bufs) {
-		BPF_ERR("failed to alloc mmap_bufs\n");
-		goto error;
-	}
-
 	ctx->epoll_events = calloc(ctx->perf_cpu_num, sizeof(struct epoll_event));
 	if (!ctx->epoll_events) {
 		BPF_ERR("failed to alloc epoll_events\n");
 		goto error;
 	}
 
-	ctx->epoll_fd = -1;
 	ctx->epoll_fd = epoll_create1(0);
 	if (ctx->epoll_fd < 0) {
 		BPF_ERR("failed to create epoll fd: %s\n", strerror(errno));
 		goto error;
 	}
 
-	for (cpu = 0; cpu < ctx->perf_cpu_num; cpu++)
-		ctx->pmu_fds[cpu] = -1;
+	if (perf_open_cpu_events(ctx, &attr, opts->cgroup_fd, &ctx->pmu_fds, &ctx->mmap_bufs) < 0)
+		goto error;
 
-	for (cpu = 0; cpu < ctx->perf_cpu_num; cpu++) {
-		ctx->pmu_fds[cpu] = syscall(__NR_perf_event_open, &attr, -1, cpu, -1, 0);
-		if (ctx->pmu_fds[cpu] < 0) {
-			BPF_ERR("failed to open perf event cpu=%d sample_type=%lx: %s\n", cpu, sample_type, strerror(errno));
-			goto error;
-		}
+	if (opts->offcpu_period) {
+		/*
+		 * Sample a stack every offcpu_period switches and record every
+		 * switch in/out; userspace pairs the records to weight samples
+		 * by the time the task stayed off-CPU.
+		 */
+		struct perf_event_attr off_attr = {
+			.type = PERF_TYPE_SOFTWARE,
+			.size = sizeof(struct perf_event_attr),
+			.config = PERF_COUNT_SW_CONTEXT_SWITCHES,
+			.sample_period = opts->offcpu_period,
+			.sample_type = sample_type,
+			.sample_stack_user = opts->offcpu_stack_size,
+			.sample_regs_user = PERF_STACK_CAPTURE_REGS_USER,
+			.disabled = 1,
+			.context_switch = 1,
+			.sample_id_all = 1,
+		};
 
-		ctx->mmap_bufs[cpu] = mmap(NULL, ctx->mmap_size + sysconf(_SC_PAGESIZE), PROT_READ | PROT_WRITE, MAP_SHARED, ctx->pmu_fds[cpu], 0);
-		if (ctx->mmap_bufs[cpu] <= 0) {
-			BPF_ERR("failed to mmap perf buffer cpu=%d: %s\n", cpu, strerror(errno));
-			ctx->mmap_bufs[cpu] = NULL;
+		if (perf_open_cpu_events(ctx, &off_attr, opts->cgroup_fd, &ctx->off_fds, &ctx->off_mmap_bufs) < 0)
 			goto error;
-		}
-
-		struct epoll_event ev;
-		ev.events = EPOLLIN;
-		ev.data.u32 = cpu;
-		if (epoll_ctl(ctx->epoll_fd, EPOLL_CTL_ADD, ctx->pmu_fds[cpu], &ev) < 0) {
-			BPF_ERR("failed to add perf fd to epoll cpu=%d: %s\n", cpu, strerror(errno));
-			goto error;
-		}
 	}
 
 	atomic_init(&ctx->stop_thread, false);
@@ -419,18 +528,10 @@ struct perf_stack_capture_ctx *perf_setup_stack_capture_event(int sample_period,
 		goto error;
 	}
 
-	for (cpu = 0; cpu < ctx->perf_cpu_num; cpu++) {
-		if (ctx->pmu_fds[cpu] >= 0) {
-			if (ioctl(ctx->pmu_fds[cpu], PERF_EVENT_IOC_RESET, 0) < 0) {
-				BPF_ERR("failed to enable perf event cpu=%d: %s\n", cpu, strerror(errno));
-				goto error;
-			}
-			if (ioctl(ctx->pmu_fds[cpu], PERF_EVENT_IOC_ENABLE, 0) < 0) {
-				BPF_ERR("failed to enable perf event cpu=%d: %s\n", cpu, strerror(errno));
-				goto error;
-			}
-		}
-	}
+	if (perf_enable_cpu_events(ctx, ctx->pmu_fds) < 0)
+		goto error;
+	if (ctx->off_fds && perf_enable_cpu_events(ctx, ctx->off_fds) < 0)
+		goto error;
 
 	return ctx;
 error:
@@ -438,10 +539,20 @@ error:
 	return NULL;
 }
 
+struct perf_stack_capture_ctx *perf_setup_stack_capture_event(int sample_period, perf_event_handler_fn handler, void *handler_data)
+{
+	struct perf_stack_capture_opts opts = {
+		.sample_freq = sample_period,
+		.cgroup_fd = -1,
+		.handler = handler,
+		.handler_data = handler_data,
+	};
+
+	return perf_setup_stack_capture(&opts);
+}
+
 void perf_stack_capture_cleanup(struct perf_stack_capture_ctx *ctx)
 {
-	int i;
-
 	if (!ctx)
 		return;
 
@@ -455,20 +566,8 @@ void perf_stack_capture_cleanup(struct perf_stack_capture_ctx *ctx)
 	if (ctx->epoll_events)
 		free(ctx->epoll_events);
 
-	if (ctx->pmu_fds) {
-		for (i = 0; i < ctx->perf_cpu_num; i++) {
-			if (ctx->pmu_fds[i] >= 0)
-				close(ctx->pmu_fds[i]);
-		}
-		free(ctx->pmu_fds);
-	}
-	if (ctx->mmap_bufs) {
-		for (i = 0; i < ctx->perf_cpu_num; i++) {
-			if (ctx->mmap_bufs[i])
-				munmap(ctx->mmap_bufs[i], ctx->mmap_size + sysconf(_SC_PAGESIZE));
-		}
-		free(ctx->mmap_bufs);
-	}
+	perf_close_cpu_events(ctx, ctx->pmu_fds, ctx->mmap_bufs);
+	perf_close_cpu_events(ctx, ctx->off_fds, ctx->off_mmap_bufs);
 	free(ctx);
 }
 

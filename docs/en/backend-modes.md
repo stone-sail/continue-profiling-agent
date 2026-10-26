@@ -13,7 +13,7 @@ They are not equivalent.
 
 - `bpf` is the full backend. It supports continuous on-CPU sampling, `offcpu`,
   `probe`, one-shot export, BPF-side filtering, and IRQOFF records.
-- `perf` only supports continuous on-CPU profiling.
+- `perf` supports continuous on-CPU profiling, plus off-CPU alongside it with `--with_offcpu`.
 
 Because of that, CPA performs a backend preflight before the runtime starts and
 then chooses one of three outcomes:

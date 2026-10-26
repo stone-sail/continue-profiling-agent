@@ -1139,10 +1139,10 @@ fn fmt_dur(ms: u64) -> String {
 }
 
 fn cpu_samples_per_cpu_per_record(data: &dyn ProfileData) -> Option<f64> {
-    let freq = data.config().freq? as f64;
+    let per_core_second = data.config().counts_per_core_second()?;
     let interval = data.config().record_interval? as f64;
-    if freq > 0.0 && interval > 0.0 {
-        Some(freq * interval)
+    if interval > 0.0 {
+        Some(per_core_second * interval)
     } else {
         None
     }
@@ -1173,6 +1173,10 @@ fn fill_cpu_sys_curves(
         let mut total: u64 = 0;
         let mut sys: u64 = 0;
         let _ = data.for_each_entry_in_record(i, &mut |ids_id, count| {
+            // Waiting time is not CPU usage.
+            if data.ids_id_is_offcpu(ids_id) {
+                return Ok(());
+            }
             // Apply filters
             if !filters.items.is_empty() {
                 if let Some(ids) = data.ids_for(ids_id) {
@@ -1416,11 +1420,11 @@ fn render_selected_detail(app: &App) -> Line<'static> {
     let (win_s, win_e) = window_bounds_ms(app);
     let dur_s = (win_e.saturating_sub(win_s) as f64) / 1000.0;
 
-    // CPU usage derived from sampling: total core-seconds = samples / freq.
-    // Average cores per second within the selection = total / duration.
-    let freq = app.profile.data.config().freq.unwrap_or(0) as f64;
-    let (avg_cps, total_c) = if freq > 0.0 && dur_s > 0.0 {
-        let total_c = samples as f64 / freq;
+    // Core-seconds = counts / counts per core-second (samples / freq, or us / 1e6
+    // in stores mixing on- and off-CPU). Average cores = total / duration.
+    let per_core_second = app.profile.data.config().counts_per_core_second().unwrap_or(0.0);
+    let (avg_cps, total_c) = if per_core_second > 0.0 && dur_s > 0.0 {
+        let total_c = samples as f64 / per_core_second;
         let avg_cps = total_c / dur_s;
         (Some(avg_cps), Some(total_c))
     } else {

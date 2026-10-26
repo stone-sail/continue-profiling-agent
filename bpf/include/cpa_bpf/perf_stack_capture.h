@@ -67,8 +67,9 @@ typedef void (*perf_switch_handler_fn)(const struct perf_switch_event *event, vo
 
 /**
  * struct perf_stack_capture_opts - perf backend capture configuration
- * @sample_freq: on-CPU sampling frequency in Hz
+ * @sample_freq: on-CPU sampling frequency in Hz, also the buffer poll rate
  * @cgroup_fd: perf_event cgroup directory fd to scope events to, or -1
+ * @oncpu: open the on-CPU sampling events
  * @handler: on-CPU sample callback
  * @offcpu_period: sample one stack every N context switches; 0 disables off-CPU
  * @offcpu_stack_size: user stack bytes dumped per off-CPU sample
@@ -81,6 +82,7 @@ typedef void (*perf_switch_handler_fn)(const struct perf_switch_event *event, vo
 struct perf_stack_capture_opts {
 	int sample_freq;
 	int cgroup_fd;
+	bool oncpu;
 	perf_event_handler_fn handler;
 	unsigned int offcpu_period;
 	unsigned int offcpu_stack_size;

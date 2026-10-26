@@ -276,7 +276,8 @@ Shared generic options:
 - `--pid, -p <PID>`: capture one target pid. The BPF backend matches host pids; `--backend perf` matches pids in the pid namespace of cpa, which suits running inside a container.
 - `--comm, -n <NAME>`: capture tasks matching one comm/group-comm name. Requires the BPF backend.
 - `--kernel_stack, -K`: capture kernel-space stacks only. Requires the BPF backend.
-- `--offcpu, -u`: collect off-CPU samples. The BPF backend collects off-CPU only; the perf backend collects off-CPU alongside on-CPU in one store counted in microseconds.
+- `--offcpu, -u`: collect off-CPU samples instead of on-CPU samples. Supported on both backends.
+- `--oncpu`: together with `--offcpu`, the perf backend collects on-CPU and off-CPU into one store. Perf stores with `--offcpu` are counted in microseconds.
 - `--offcpu_period <N>`: on the perf backend with `--offcpu`, capture one off-CPU stack every N context switches. Default: 100.
 - `--offcpu_stack_size <BYTES>`: on the perf backend with `--offcpu`, user stack bytes copied per off-CPU sample. Default: 16384.
 - `--perf_cgroup <auto|DIR>`: on the perf backend, sample only tasks in this perf_event cgroup. Defaults to `auto` (the cgroup of cpa) with `--offcpu`.

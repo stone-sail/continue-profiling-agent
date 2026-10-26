@@ -355,7 +355,8 @@ static void *poll_event_thread(void *arg)
 	while (!atomic_load(&ctx->stop_thread)) {
 		usleep(ctx->sleep_us);
 		for (i = 0; i < ctx->perf_cpu_num; i++) {
-			process_perf_data(ctx, ctx->mmap_bufs[i], ctx->handler);
+			if (ctx->mmap_bufs)
+				process_perf_data(ctx, ctx->mmap_bufs[i], ctx->handler);
 			if (ctx->off_mmap_bufs)
 				process_perf_data(ctx, ctx->off_mmap_bufs[i], ctx->offcpu_handler);
 		}
@@ -495,7 +496,7 @@ struct perf_stack_capture_ctx *perf_setup_stack_capture(const struct perf_stack_
 		goto error;
 	}
 
-	if (perf_open_cpu_events(ctx, &attr, opts->cgroup_fd, &ctx->pmu_fds, &ctx->mmap_bufs) < 0)
+	if (opts->oncpu && perf_open_cpu_events(ctx, &attr, opts->cgroup_fd, &ctx->pmu_fds, &ctx->mmap_bufs) < 0)
 		goto error;
 
 	if (opts->offcpu_period) {
@@ -528,7 +529,7 @@ struct perf_stack_capture_ctx *perf_setup_stack_capture(const struct perf_stack_
 		goto error;
 	}
 
-	if (perf_enable_cpu_events(ctx, ctx->pmu_fds) < 0)
+	if (ctx->pmu_fds && perf_enable_cpu_events(ctx, ctx->pmu_fds) < 0)
 		goto error;
 	if (ctx->off_fds && perf_enable_cpu_events(ctx, ctx->off_fds) < 0)
 		goto error;
@@ -544,6 +545,7 @@ struct perf_stack_capture_ctx *perf_setup_stack_capture_event(int sample_period,
 	struct perf_stack_capture_opts opts = {
 		.sample_freq = sample_period,
 		.cgroup_fd = -1,
+		.oncpu = true,
 		.handler = handler,
 		.handler_data = handler_data,
 	};

@@ -257,7 +257,8 @@ taskset -c 0 libs/libgunwinder/bin/cfi_bench \
 - `--pid, -p <PID>`：只采集指定 pid。BPF 后端按宿主机 pid 匹配；`--backend perf` 按 cpa 所在 PID 命名空间的 pid 匹配，适合在容器内使用。
 - `--comm, -n <NAME>`：按 comm/group-comm 过滤采集对象。需要 BPF 后端。
 - `--kernel_stack, -K`：只采集内核态栈。需要 BPF 后端。
-- `--offcpu, -u`：采集 off-CPU 样本。BPF 后端只采 off-CPU；perf 后端在采 on-CPU 的同时采 off-CPU，写入同一个 store，计数单位为微秒。
+- `--offcpu, -u`：只采集 off-CPU 样本（不再采 on-CPU）。BPF 和 perf 后端都支持。
+- `--oncpu`：和 `--offcpu` 一起使用时，perf 后端同时采 on-CPU 和 off-CPU，写入同一个 store。perf 后端带 `--offcpu` 时计数单位为微秒。
 - `--offcpu_period <N>`：perf 后端 `--offcpu` 时每 N 次上下文切换采一次 off-CPU 调用栈，默认 100。
 - `--offcpu_stack_size <BYTES>`：perf 后端 `--offcpu` 时每个 off-CPU 样本复制的用户栈字节数，默认 16384。
 - `--perf_cgroup <auto|DIR>`：perf 后端只采样指定 perf_event cgroup 内的任务；`--offcpu` 时默认 `auto`（cpa 自身所在 cgroup）。

@@ -12,7 +12,7 @@
 但它们并不是能力对等的两套实现。当前代码里的约束是：
 
 - `bpf` 是完整后端，支持 on-CPU 持续采样、`offcpu`、`probe`、one-shot、BPF 侧过滤，以及 IRQOFF 记录。
-- `perf` 支持 on-CPU 持续采样，以及通过 `--offcpu` 同时采集 off-CPU（BPF 后端的 `--offcpu` 只采 off-CPU）。
+- `perf` 支持 on-CPU 持续采样，以及通过 `--offcpu` 采 off-CPU；加 `--oncpu --offcpu` 可以同时采两种。
 
 因此，CPA 在启动阶段会先做一次后端能力检查，再决定：
 
@@ -84,7 +84,7 @@ BPF 路径会用到：
 - `--kernel_stack`
 - 非默认 `--stack_size`
 
-`--backend=perf --offcpu` 是允许的，但语义和 BPF 后端不同：perf 后端在 on-CPU 之外同时采 off-CPU，BPF 后端只采 off-CPU。因此带 `--offcpu` 的 BPF 请求不会自动回退到 perf。
+`--backend=perf --offcpu` 是允许的，和 BPF 后端一样只采 off-CPU，但实现不同（perf 配对上下文切换记录，BPF 挂 `finish_task_switch`）。因此带 `--offcpu` 的 BPF 请求不会自动回退到 perf。`--oncpu --offcpu` 只有 perf 后端支持。
 
 `--backend=perf --pid <PID>` 是允许的：perf 后端在用户态按 pid/tid 过滤。
 注意两条后端的 pid 语义不同：BPF 匹配根 PID 命名空间（宿主机）的 pid，
@@ -151,7 +151,6 @@ CPA 会检查：
 
 当前 perf 后端不提供：
 
-- 只采 off-CPU（perf 的 `--offcpu` 总是和 on-CPU 一起采）
 - `probe`
 - one-shot
 - BPF 侧 `comm/kernel_stack` 过滤（`--pid` 在 perf 路径上由用户态过滤，见上文）
@@ -182,7 +181,7 @@ BPF capability check failed: <reason>. Requested mode requires BPF backend and c
 
 ### 什么时候建议显式写 `--backend=bpf`
 
-- 你需要只采 off-CPU，或依赖 kprobe 方式的 off-CPU
+- 你依赖 kprobe 方式的 off-CPU
 - 你明确依赖 `--probe`
 - 你要 one-shot
 - 你要 BPF 侧过滤或内核栈-only 语义

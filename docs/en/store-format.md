@@ -64,6 +64,7 @@ Stores collected by the perf backend with `--offcpu` also write:
 - `count_unit: us`: `stack.bin` counts are microseconds instead of samples;
   readers derive core usage as `count / 1000000` instead of `count / freq`
 - `offcpu`
+- `oncpu`: whether on-CPU samples were collected too
 - `offcpu_period`
 
 Readers ignore unknown keys in `conf` and continue with supported keys.

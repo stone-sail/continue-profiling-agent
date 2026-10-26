@@ -88,7 +88,8 @@ ARG_DEFINE("ring_size_mb", NO_SINGLE_NAME, "ring buffer size in MiB when datapat
 	ARG_DEFINE("split_path", NO_SINGLE_NAME, "export the selected time range as raw split files into this directory.", true),
 
 	/* profile */
-	ARG_DEFINE("offcpu", 'u', "collect off-CPU samples. bpf backend: off-CPU only; perf backend: alongside on-CPU in one store counted in microseconds.", false),
+	ARG_DEFINE("offcpu", 'u', "collect off-CPU samples instead of on-CPU samples; add --oncpu on the perf backend to collect both into one store.", false),
+	ARG_DEFINE("oncpu", NO_SINGLE_NAME, "with --offcpu on the perf backend, also collect on-CPU samples; both are counted in microseconds.", false),
 	ARG_DEFINE("offcpu_period", NO_SINGLE_NAME, "perf backend with offcpu: capture one off-CPU stack every N context switches.", true),
 	ARG_DEFINE("offcpu_stack_size", NO_SINGLE_NAME, "perf backend with offcpu: user stack bytes copied per off-CPU sample.", true),
 	ARG_DEFINE("perf_cgroup", NO_SINGLE_NAME, "perf backend: scope sampling to a perf_event cgroup directory, or auto for the cgroup of cpa. Defaults to auto with offcpu.", true),

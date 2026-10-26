@@ -73,14 +73,14 @@ sudo ./build/bin/cpa monitor \
   --store_dir /var/log/cpa
 ```
 
-Perf backend collecting on-CPU and off-CPU together (works inside containers;
-unlike the BPF backend, where `--offcpu` collects off-CPU only):
+Perf backend off-CPU (works inside containers). `--offcpu` alone collects
+off-CPU only, like the BPF backend; adding `--oncpu` collects both together:
 
 ```bash
 sudo ./build/bin/cpa monitor \
   --backend perf \
   --pid 12345 \
-  --offcpu \
+  --oncpu --offcpu \
   --store_dir /var/log/cpa
 ```
 
@@ -88,8 +88,9 @@ sudo ./build/bin/cpa monitor \
   (default 100), copying `--offcpu_stack_size` bytes of user stack (default 16384).
 - Every switch-out/switch-in is also recorded, and each off-CPU stack is weighted
   by the time the thread stayed off-CPU times `offcpu_period`.
-- Counts are microseconds (`count_unit: us` in `conf`); an on-CPU sample counts
-  `1000000 / freq` us, so one flamegraph covers the wall-clock time of all threads.
+- Counts are microseconds (`count_unit: us` in `conf`). With `--oncpu`, an
+  on-CPU sample counts `1000000 / freq` us, so one flamegraph covers the
+  wall-clock time of all threads.
 - Off-CPU stacks carry a `<# OFFCPU SAMPLE: (R|S) #>` frame after the metadata:
   `R` means preempted, `S` means the thread gave up the CPU.
 - Sampling is scoped to the perf_event cgroup of cpa (`--perf_cgroup auto`) by

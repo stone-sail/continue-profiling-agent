@@ -70,13 +70,20 @@ def test_cpa_monitor_bench_reports_dwarf_unwind_stats(tmp_path):
     assert "Bench DWARF Histogram:" in full_output
 
 
-def test_cpa_monitor_perf_offcpu_writes_us_store(tmp_path):
-    # perf --offcpu collects off-CPU next to on-CPU in one microsecond store
+@pytest.mark.parametrize(
+    "extra_args, oncpu",
+    [
+        (["--offcpu"], "0"),
+        (["--oncpu", "--offcpu"], "1"),
+    ],
+)
+def test_cpa_monitor_perf_offcpu_writes_us_store(tmp_path, extra_args, oncpu):
+    # perf --offcpu alone collects off-CPU only; --oncpu adds on-CPU to the store
     stdout, stderr, return_code = run_command(
         [
             "monitor",
             "--backend=perf",
-            "--offcpu",
+            *extra_args,
             "--freq=49",
             "--duration=2",
             "--store_dir",
@@ -89,7 +96,17 @@ def test_cpa_monitor_perf_offcpu_writes_us_store(tmp_path):
     assert confs
     conf = confs[0].read_text(encoding="utf-8")
     assert "count_unit: us" in conf
+    assert f"oncpu: {oncpu}" in conf
     assert "offcpu_period: 100" in conf
+
+
+def test_cpa_monitor_rejects_oncpu_and_offcpu_on_bpf_backend(tmp_path):
+    stdout, stderr, return_code = run_command(
+        ["monitor", "--backend=bpf", "--oncpu", "--offcpu", "--duration=1", "--store_dir", str(tmp_path)]
+    )
+
+    assert return_code != 0
+    assert "use --backend perf" in f"{stdout}{stderr}"
 
 
 def test_cpa_monitor_rejects_perf_backend_with_probe(tmp_path):

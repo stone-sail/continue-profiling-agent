@@ -60,6 +60,7 @@ perf 后端使用 `--offcpu` 采集的 store 还会写入：
 
 - `count_unit: us`：`stack.bin` 里的计数是微秒而不是样本数，读取侧用 `count / 1000000` 而不是 `count / freq` 换算 CPU 核数
 - `offcpu`
+- `oncpu`：是否同时采了 on-CPU
 - `offcpu_period`
 
 读取侧会忽略 `conf` 中的未知键，仅处理当前字段定义。

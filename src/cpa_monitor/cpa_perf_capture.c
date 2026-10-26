@@ -429,28 +429,29 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 	}
 	perf_capture_config.pid = pid;
 
-	/* Unlike bpf (off-CPU only), perf collects off-CPU next to on-CPU. */
-	bool with_offcpu = atoi(get_arg_by_name(ctx, "offcpu")) != 0;
+	/* --offcpu alone collects off-CPU only; with --oncpu both go into one store. */
+	bool offcpu = atoi(get_arg_by_name(ctx, "offcpu")) != 0;
+	bool oncpu = !offcpu || atoi(get_arg_by_name(ctx, "oncpu")) != 0;
 	int offcpu_period = atoi(get_arg_by_name(ctx, "offcpu_period"));
 	int offcpu_stack_size = atoi(get_arg_by_name(ctx, "offcpu_stack_size"));
-	if (with_offcpu && offcpu_period <= 0) {
+	if (offcpu && offcpu_period <= 0) {
 		CLI_ERROR("Please use offcpu_period > 0");
 		return CPA_INIT_FAILED;
 	}
 	/* The kernel needs a u64-aligned dump size below 64KiB. */
-	if (with_offcpu && (offcpu_stack_size <= 0 || offcpu_stack_size % 8 || offcpu_stack_size > MAX_USER_STACK_DUMP_SIZE)) {
+	if (offcpu && (offcpu_stack_size <= 0 || offcpu_stack_size % 8 || offcpu_stack_size > MAX_USER_STACK_DUMP_SIZE)) {
 		CLI_ERROR("Please use offcpu_stack_size as a multiple of 8 in (0, %d]", MAX_USER_STACK_DUMP_SIZE);
 		return CPA_INIT_FAILED;
 	}
-	perf_capture_config.offcpu_period = with_offcpu ? offcpu_period : 0;
+	perf_capture_config.offcpu_period = offcpu ? offcpu_period : 0;
 	perf_capture_config.offcpu_stack_size = offcpu_stack_size;
-	/* Mixed stores count microseconds so on- and off-CPU weights add up. */
-	perf_capture_config.oncpu_count = with_offcpu ? 1000000UL / perf_capture_config.freq : 1;
+	/* Off-CPU stores count microseconds so on- and off-CPU weights add up. */
+	perf_capture_config.oncpu_count = offcpu ? 1000000UL / perf_capture_config.freq : 1;
 
 	/* Off-CPU needs cgroup scoping: host-wide switch records are too many. */
 	const char *cgroup_spec = get_arg_by_name(ctx, "perf_cgroup");
 	if (cli_arg_is_null_default(cgroup_spec))
-		cgroup_spec = with_offcpu ? "auto" : NULL;
+		cgroup_spec = offcpu ? "auto" : NULL;
 
 	if (perf_capture_config.cgroup_fd >= 0) {
 		close(perf_capture_config.cgroup_fd);
@@ -471,6 +472,7 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 	struct perf_stack_capture_opts opts = {
 		.sample_freq = perf_capture_config.freq,
 		.cgroup_fd = perf_capture_config.cgroup_fd,
+		.oncpu = oncpu,
 		.handler = perf_capture_handler,
 		.offcpu_period = perf_capture_config.offcpu_period,
 		.offcpu_stack_size = perf_capture_config.offcpu_stack_size,

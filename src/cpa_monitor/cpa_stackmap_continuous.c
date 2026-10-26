@@ -81,6 +81,7 @@ static void save_monitor_config(void *ctx)
 	if (atoi(get_arg_by_name(ctx, "offcpu")) && strcmp(get_arg_by_name(ctx, "backend"), "perf") == 0) {
 		add_config_item(config, "count_unit", "us");
 		ADD_CONFIG(offcpu);
+		ADD_CONFIG(oncpu);
 		ADD_CONFIG(offcpu_period);
 	}
 

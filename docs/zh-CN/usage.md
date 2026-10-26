@@ -68,19 +68,19 @@ sudo ./build/bin/cpa monitor \
   --store_dir /var/log/cpa
 ```
 
-perf 后端同时采集 on-CPU 和 off-CPU（适合容器内运行；和 BPF 后端不同，BPF 的 `--offcpu` 只采 off-CPU）：
+perf 后端采集 off-CPU（适合容器内运行）。只加 `--offcpu` 只采 off-CPU，和 BPF 后端一致；再加 `--oncpu` 则 on-CPU 和 off-CPU 一起采：
 
 ```bash
 sudo ./build/bin/cpa monitor \
   --backend perf \
   --pid 12345 \
-  --offcpu \
+  --oncpu --offcpu \
   --store_dir /var/log/cpa
 ```
 
 - 每 `--offcpu_period` 次上下文切换（默认 100）采一次 off-CPU 调用栈，用户栈复制 `--offcpu_stack_size` 字节（默认 16384）。
 - 同时记录每次切出/切入，按"等待时长 × offcpu_period"给 off-CPU 栈加权。
-- 计数单位改为微秒（`conf` 写入 `count_unit: us`），on-CPU 每个样本记 `1000000 / freq` 微秒，一张火焰图就是所有线程的总墙钟时间。
+- 计数单位改为微秒（`conf` 写入 `count_unit: us`）。同时采 on-CPU 时，on-CPU 每个样本记 `1000000 / freq` 微秒，一张火焰图就是所有线程的总墙钟时间。
 - off-CPU 栈在 metadata 之后带 `<# OFFCPU SAMPLE: (R|S) #>` 标记：`R` 是被抢占，`S` 是主动让出 CPU。
 - 采集范围默认限定在 cpa 自身所在的 perf_event cgroup（`--perf_cgroup auto`），也可以传 cgroup 目录。
 

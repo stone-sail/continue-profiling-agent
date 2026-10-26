@@ -31,6 +31,7 @@ struct cpa_monitor_mode {
 	bool kernel_stack;
 	bool probe_enabled;
 	bool comm_filter;
+	bool oncpu;
 	bool perf_cgroup;
 };
 
@@ -49,6 +50,7 @@ static void cpa_mode_init(struct cpa_monitor_mode *mode, void *ctx)
 	mode->kernel_stack = atoi(get_arg_by_name(ctx, "kernel_stack")) != 0;
 	mode->probe_enabled = !cli_arg_is_null_default(mode->probe_name);
 	mode->comm_filter = !cli_arg_is_null_default(mode->comm);
+	mode->oncpu = atoi(get_arg_by_name(ctx, "oncpu")) != 0;
 	mode->perf_cgroup = !cli_arg_is_null_default(get_arg_by_name(ctx, "perf_cgroup"));
 }
 
@@ -415,10 +417,10 @@ static bool cpa_perf_mode_uses_bpf_only_features(const struct cpa_monitor_mode *
 }
 
 /*
- * --pid and --offcpu are accepted by both backends with different semantics:
- * BPF matches init-namespace pids and collects off-CPU only, perf matches
- * pids in the pid namespace of cpa and collects off-CPU alongside on-CPU.
- * Never switch backends silently under either option.
+ * --pid is accepted by both backends with different pid namespace semantics:
+ * BPF matches init-namespace pids, perf matches pids in the pid namespace of
+ * cpa. Off-CPU differs too (BPF probes finish_task_switch, perf pairs context
+ * switch records). Never switch backends silently under either option.
  */
 static bool cpa_bpf_mode_can_fallback_to_perf(const struct cpa_monitor_mode *mode)
 {
@@ -429,6 +431,10 @@ static int cpa_reject_perf_backend(const struct cpa_monitor_mode *mode)
 {
 	if (strcmp(mode->backend, "perf") != 0 && mode->perf_cgroup) {
 		CLI_ERROR("--perf_cgroup requires --backend perf");
+		return -EINVAL;
+	}
+	if (strcmp(mode->backend, "perf") != 0 && mode->oncpu && mode->offcpu) {
+		CLI_ERROR("the bpf backend collects either on-CPU or off-CPU; use --backend perf to collect both with --oncpu --offcpu");
 		return -EINVAL;
 	}
 

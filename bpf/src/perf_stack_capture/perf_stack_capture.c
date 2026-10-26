@@ -150,6 +150,9 @@ static void parse_perf_stack_event(void *data, unsigned long type, struct perf_s
 		remaining -= sizeof(unsigned int);
 	}
 
+	if (type & PERF_SAMPLE_PERIOD)
+		READ_U64(out->period);
+
 	if (type & PERF_SAMPLE_CALLCHAIN) {
 		READ_U64(nr);
 
@@ -468,6 +471,9 @@ struct perf_stack_capture_ctx *perf_setup_stack_capture(const struct perf_stack_
 	ctx->handler_data = opts->handler_data;
 	/* Kernel-only samples carry no user registers or stack dump. */
 	ctx->sample_type = opts->kernel_only ? PERF_STACK_CAPTURE_KERNEL_SAMPLE_TYPE : PERF_STACK_CAPTURE_SAMPLE_TYPE;
+	/* Custom events weight each sample by its period; switch trailers are unaffected. */
+	if (opts->custom_event)
+		ctx->sample_type |= PERF_SAMPLE_PERIOD;
 
 	ctx->sleep_us = 1000 * 1000 / opts->sample_freq;
 	atomic_init(&ctx->lost_events, 0);
@@ -499,6 +505,18 @@ struct perf_stack_capture_ctx *perf_setup_stack_capture(const struct perf_stack_
 	if (ctx->epoll_fd < 0) {
 		BPF_ERR("failed to create epoll fd: %s\n", strerror(errno));
 		goto error;
+	}
+
+	if (opts->custom_event) {
+		attr.type = opts->event_type;
+		attr.config = opts->event_config;
+		if (opts->event_period) {
+			attr.freq = 0;
+			attr.sample_period = opts->event_period;
+		}
+		/* Not every PMU accepts exclude_idle; only cpu-clock needs it. */
+		if (opts->event_type != PERF_TYPE_SOFTWARE)
+			attr.exclude_idle = 0;
 	}
 
 	if (opts->probe_type) {

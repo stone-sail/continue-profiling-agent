@@ -76,7 +76,7 @@ BPF 路径会用到：
 
 如果用户指定了 `--backend=perf`，但同时又开启了 perf 不支持的选项，CPA 会直接报错。
 
-当前 perf 后端只拒绝 `--probe` 与 `--offcpu` 同时使用。`--oneshot`、`--comm`、`--kernel_stack`、`--stack_size`、`--probe` 在 perf 后端的语义和 BPF 一致；`--probe` 的 kprobe/kretprobe 走 kprobe PMU（4.17+），tracepoint 需要挂载 tracefs；其中 `--comm` 在用户态按线程名过滤，内核仍会复制不匹配线程的栈，建议配合 `--perf_cgroup` 缩小范围。
+当前 perf 后端只拒绝 `--probe` 与 `--offcpu` 同时使用，以及 `--perf_event` 与 `--probe`、`--offcpu` 同时使用。`--perf_event`、`--perf_period` 只有 perf 后端支持。`--oneshot`、`--comm`、`--kernel_stack`、`--stack_size`、`--probe` 在 perf 后端的语义和 BPF 一致；`--probe` 的 kprobe/kretprobe 走 kprobe PMU（4.17+），tracepoint 需要挂载 tracefs；其中 `--comm` 在用户态按线程名过滤，内核仍会复制不匹配线程的栈，建议配合 `--perf_cgroup` 缩小范围。
 
 `--backend=perf --offcpu` 是允许的，和 BPF 后端一样只采 off-CPU，但实现不同（perf 配对上下文切换记录，BPF 挂 `finish_task_switch`）。因此带 `--offcpu` 的 BPF 请求不会自动回退到 perf。`--oncpu --offcpu` 只有 perf 后端支持。
 

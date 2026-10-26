@@ -97,6 +97,34 @@ sudo ./build/bin/cpa monitor \
   the cgroup of the `--pid` process, or of cpa itself without `--pid`; a cgroup
   directory can be passed instead.
 
+The perf backend can sample a hardware or software event to find where cache
+misses or branch mispredictions concentrate:
+
+```bash
+sudo ./build/bin/cpa monitor \
+  --backend perf \
+  --pid 12345 \
+  --perf_event branch-misses \
+  --store_dir /var/log/cpa
+```
+
+- `--perf_event` takes `perf list` names: hardware events such as `cycles`,
+  `instructions`, `cache-references`, `cache-misses`, `branches`,
+  `branch-misses`, `ref-cycles`; cache events of the form
+  `<L1-dcache|L1-icache|LLC|dTLB|iTLB|branch|node>-<loads|stores|prefetches>[-misses]`;
+  software events such as `page-faults`, `major-faults`, `cpu-migrations`;
+  and `r<hex>` for a raw PMU event.
+- Sampling follows `--freq` by default, with the kernel adjusting how many
+  events each sample stands for; `--perf_period N` samples every N events
+  instead. Use a larger N for more frequent events.
+- Each sample is weighted by the events it stands for, so flamegraph width is
+  an estimated event count. `conf` records `count_unit: <event>` and
+  `cpa show` stops converting counts to CPU usage.
+- This shows where misses happen, not hit rates. For a ratio, record the
+  denominator (`LLC-loads`, `branches`) too, or use `perf stat`.
+- Cannot be combined with `--probe` or `--offcpu`. Hardware events need PMU
+  access, which some containers do not have.
+
 ## `cpa show`
 
 `cpa show` reads a stored profile directory.

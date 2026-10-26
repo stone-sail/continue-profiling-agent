@@ -52,6 +52,11 @@ struct perf_capture_config {
 	unsigned int probe_type;
 	unsigned long long probe_config;
 	char probe_func[256];
+	/* --perf_event replacing cpu-clock; samples then weigh their period */
+	bool custom_event;
+	unsigned int event_type;
+	unsigned long long event_config;
+	unsigned long event_period;
 };
 
 enum cpa_capture_state { STACK_PROCESS_STATE_INIT = 0, STACK_PROCESS_STATE_PAUSE, STACK_PROCESS_STATE_RUNNING, STACK_PROCESS_STATE_EXIT };
@@ -75,7 +80,7 @@ static struct stack_sample *perf_stack_sample_build(struct perf_stack_event *eve
 	sample->type = 0;
 	sample->user_mode = true;
 	sample->pid = event->pid;
-	sample->stack_count = perf_capture_config.oncpu_count;
+	sample->stack_count = perf_capture_config.custom_event ? (event->period ? event->period : 1) : perf_capture_config.oncpu_count;
 	sample->state = 0;
 	if (perf_capture_config.kernel_only)
 		sample->type |= STACK_EVENT_KERNEL_ONLY;
@@ -547,6 +552,117 @@ static int perf_probe_resolve(const char *spec)
 	return -EINVAL;
 }
 
+struct perf_event_name {
+	const char *name;
+	unsigned int type;
+	unsigned long long config;
+};
+
+static const struct perf_event_name perf_event_names[] = {
+	{ "cpu-clock", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_CLOCK },
+	{ "task-clock", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_TASK_CLOCK },
+	{ "page-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS },
+	{ "faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS },
+	{ "minor-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS_MIN },
+	{ "major-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS_MAJ },
+	{ "context-switches", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CONTEXT_SWITCHES },
+	{ "cs", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CONTEXT_SWITCHES },
+	{ "cpu-migrations", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_MIGRATIONS },
+	{ "migrations", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_MIGRATIONS },
+	{ "alignment-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_ALIGNMENT_FAULTS },
+	{ "emulation-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_EMULATION_FAULTS },
+	{ "cycles", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES },
+	{ "cpu-cycles", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES },
+	{ "instructions", PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS },
+	{ "cache-references", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CACHE_REFERENCES },
+	{ "cache-misses", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CACHE_MISSES },
+	{ "branches", PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS },
+	{ "branch-instructions", PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_INSTRUCTIONS },
+	{ "branch-misses", PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES },
+	{ "bus-cycles", PERF_TYPE_HARDWARE, PERF_COUNT_HW_BUS_CYCLES },
+	{ "stalled-cycles-frontend", PERF_TYPE_HARDWARE, PERF_COUNT_HW_STALLED_CYCLES_FRONTEND },
+	{ "stalled-cycles-backend", PERF_TYPE_HARDWARE, PERF_COUNT_HW_STALLED_CYCLES_BACKEND },
+	{ "ref-cycles", PERF_TYPE_HARDWARE, PERF_COUNT_HW_REF_CPU_CYCLES },
+};
+
+static const struct perf_event_name perf_cache_names[] = {
+	{ "L1-dcache", 0, PERF_COUNT_HW_CACHE_L1D }, { "L1-icache", 0, PERF_COUNT_HW_CACHE_L1I }, { "LLC", 0, PERF_COUNT_HW_CACHE_LL },
+	{ "dTLB", 0, PERF_COUNT_HW_CACHE_DTLB },     { "iTLB", 0, PERF_COUNT_HW_CACHE_ITLB },     { "branch", 0, PERF_COUNT_HW_CACHE_BPU },
+	{ "node", 0, PERF_COUNT_HW_CACHE_NODE },
+};
+
+static const struct perf_event_name perf_cache_ops[] = {
+	{ "loads", 0, PERF_COUNT_HW_CACHE_OP_READ },
+	{ "stores", 0, PERF_COUNT_HW_CACHE_OP_WRITE },
+	{ "prefetches", 0, PERF_COUNT_HW_CACHE_OP_PREFETCH },
+};
+
+/* perf's cache event names: <cache>-<loads|stores|prefetches>[-misses]. */
+static bool perf_event_resolve_cache(const char *spec, unsigned long long *config)
+{
+	for (size_t i = 0; i < sizeof(perf_cache_names) / sizeof(perf_cache_names[0]); i++) {
+		size_t len = strlen(perf_cache_names[i].name);
+
+		if (strncmp(spec, perf_cache_names[i].name, len) != 0 || spec[len] != '-')
+			continue;
+		for (size_t j = 0; j < sizeof(perf_cache_ops) / sizeof(perf_cache_ops[0]); j++) {
+			const char *op = spec + len + 1;
+			size_t op_len = strlen(perf_cache_ops[j].name);
+			unsigned long long result;
+
+			if (strncmp(op, perf_cache_ops[j].name, op_len) != 0)
+				continue;
+			if (op[op_len] == '\0')
+				result = PERF_COUNT_HW_CACHE_RESULT_ACCESS;
+			else if (strcmp(op + op_len, "-misses") == 0)
+				result = PERF_COUNT_HW_CACHE_RESULT_MISS;
+			else
+				continue;
+			*config = perf_cache_names[i].config | (perf_cache_ops[j].config << 8) | (result << 16);
+			return true;
+		}
+	}
+
+	return false;
+}
+
+/* Same names as perf list, plus r<hex> for raw PMU events. */
+static int perf_event_resolve(const char *spec)
+{
+	perf_capture_config.custom_event = false;
+
+	for (size_t i = 0; i < sizeof(perf_event_names) / sizeof(perf_event_names[0]); i++) {
+		if (strcmp(spec, perf_event_names[i].name) == 0) {
+			perf_capture_config.event_type = perf_event_names[i].type;
+			perf_capture_config.event_config = perf_event_names[i].config;
+			/* cpu-clock is the default on-CPU sampling, counted in samples. */
+			perf_capture_config.custom_event = !(perf_event_names[i].type == PERF_TYPE_SOFTWARE && perf_event_names[i].config == PERF_COUNT_SW_CPU_CLOCK);
+			return 0;
+		}
+	}
+
+	if (perf_event_resolve_cache(spec, &perf_capture_config.event_config)) {
+		perf_capture_config.event_type = PERF_TYPE_HW_CACHE;
+		perf_capture_config.custom_event = true;
+		return 0;
+	}
+
+	if (spec[0] == 'r' && spec[1]) {
+		char *end = NULL;
+
+		errno = 0;
+		perf_capture_config.event_config = strtoull(spec + 1, &end, 16);
+		if (errno == 0 && end && *end == '\0') {
+			perf_capture_config.event_type = PERF_TYPE_RAW;
+			perf_capture_config.custom_event = true;
+			return 0;
+		}
+	}
+
+	CLI_ERROR("Unknown perf event %s; use a perf list name such as cache-misses, branch-misses, LLC-load-misses, or r<hex> for a raw event", spec);
+	return -EINVAL;
+}
+
 /* The kernfs file handle of a cgroup directory is its cgroup id. */
 static unsigned long perf_cgroup_id(int cgroup_fd)
 {
@@ -612,6 +728,27 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 		return CPA_INIT_FAILED;
 	if (!probe_enabled)
 		perf_capture_config.probe_type = 0;
+
+	const char *perf_event = get_arg_by_name(ctx, "perf_event");
+	perf_capture_config.custom_event = false;
+	if (!cli_arg_is_null_default(perf_event)) {
+		if (probe_enabled || atoi(get_arg_by_name(ctx, "offcpu"))) {
+			CLI_ERROR("--perf_event cannot be combined with --probe or --offcpu");
+			return CPA_INIT_FAILED;
+		}
+		if (perf_event_resolve(perf_event) < 0)
+			return CPA_INIT_FAILED;
+	}
+	long perf_period = atol(get_arg_by_name(ctx, "perf_period"));
+	if (perf_period < 0) {
+		CLI_ERROR("Please use perf_period >= 0");
+		return CPA_INIT_FAILED;
+	}
+	if (perf_period > 0 && !perf_capture_config.custom_event) {
+		CLI_ERROR("--perf_period requires --perf_event other than cpu-clock");
+		return CPA_INIT_FAILED;
+	}
+	perf_capture_config.event_period = perf_period;
 
 	perf_capture_config.freq = atoi(get_arg_by_name(ctx, "freq"));
 	if (perf_capture_config.freq > 99 || perf_capture_config.freq < 9) {
@@ -704,6 +841,10 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 		.probe_type = perf_capture_config.probe_type,
 		.probe_config = perf_capture_config.probe_config,
 		.probe_func = perf_capture_config.probe_func[0] ? perf_capture_config.probe_func : NULL,
+		.custom_event = perf_capture_config.custom_event,
+		.event_type = perf_capture_config.event_type,
+		.event_config = perf_capture_config.event_config,
+		.event_period = perf_capture_config.event_period,
 		.handler = perf_capture_handler,
 		.offcpu_period = perf_capture_config.offcpu_period,
 		.offcpu_stack_size = perf_capture_config.offcpu_stack_size,

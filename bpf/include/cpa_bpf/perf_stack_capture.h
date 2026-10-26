@@ -27,6 +27,8 @@ struct perf_stack_event {
 	unsigned int pid;
 	unsigned int tid;
 	unsigned int cpu;
+	/* events this sample stands for; 0 unless a custom event is sampled */
+	unsigned long period;
 	unsigned long cgid;
 	char comm[TASK_COMM_LEN];
 	unsigned long rsp;
@@ -77,6 +79,11 @@ typedef void (*perf_switch_handler_fn)(const struct perf_switch_event *event, vo
  *              sampled
  * @probe_config: perf event config of the probe
  * @probe_func: kprobe function name, NULL for tracepoints
+ * @custom_event: sample @event_type/@event_config instead of cpu-clock; each
+ *                sample then reports its period in perf_stack_event.period
+ * @event_type: perf event type of the custom event
+ * @event_config: perf event config of the custom event
+ * @event_period: sample every N events; 0 samples at @sample_freq instead
  * @handler: on-CPU (or probe) sample callback
  * @offcpu_period: sample one stack every N context switches; 0 disables off-CPU
  * @offcpu_stack_size: user stack bytes dumped per off-CPU sample
@@ -95,6 +102,10 @@ struct perf_stack_capture_opts {
 	unsigned int probe_type;
 	unsigned long long probe_config;
 	const char *probe_func;
+	bool custom_event;
+	unsigned int event_type;
+	unsigned long long event_config;
+	unsigned long event_period;
 	perf_event_handler_fn handler;
 	unsigned int offcpu_period;
 	unsigned int offcpu_stack_size;

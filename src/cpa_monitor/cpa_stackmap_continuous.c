@@ -85,6 +85,14 @@ static void save_monitor_config(void *ctx)
 		ADD_CONFIG(offcpu_period);
 	}
 
+	/* Custom perf events count estimated events; name the event as the unit. */
+	const char *perf_event = get_arg_by_name(ctx, "perf_event");
+	if (strcmp(get_arg_by_name(ctx, "backend"), "perf") == 0 && !cli_arg_is_null_default(perf_event) && strcmp(perf_event, "cpu-clock") != 0) {
+		add_config_item(config, "count_unit", perf_event);
+		ADD_CONFIG(perf_event);
+		ADD_CONFIG(perf_period);
+	}
+
 	CLI_OUTPUT("write config to %s", config->config_path);
 
 	dump_config(config);

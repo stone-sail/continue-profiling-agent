@@ -34,6 +34,7 @@ struct cpa_monitor_mode {
 	bool comm_filter;
 	bool oncpu;
 	bool perf_cgroup;
+	bool perf_event;
 };
 
 static void cpa_mode_init(struct cpa_monitor_mode *mode, void *ctx)
@@ -53,6 +54,7 @@ static void cpa_mode_init(struct cpa_monitor_mode *mode, void *ctx)
 	mode->comm_filter = !cli_arg_is_null_default(mode->comm);
 	mode->oncpu = atoi(get_arg_by_name(ctx, "oncpu")) != 0;
 	mode->perf_cgroup = !cli_arg_is_null_default(get_arg_by_name(ctx, "perf_cgroup"));
+	mode->perf_event = !cli_arg_is_null_default(get_arg_by_name(ctx, "perf_event")) || atol(get_arg_by_name(ctx, "perf_period")) != 0;
 }
 
 static int cpa_append_reason(char *buf, size_t size, const char *fmt, ...)
@@ -427,6 +429,14 @@ static int cpa_reject_perf_backend(const struct cpa_monitor_mode *mode)
 {
 	if (strcmp(mode->backend, "perf") != 0 && mode->perf_cgroup) {
 		CLI_ERROR("--perf_cgroup requires --backend perf");
+		return -EINVAL;
+	}
+	if (strcmp(mode->backend, "perf") != 0 && mode->perf_event) {
+		CLI_ERROR("--perf_event and --perf_period require --backend perf");
+		return -EINVAL;
+	}
+	if (!strcmp(mode->backend, "perf") && mode->perf_event && (mode->probe_enabled || mode->offcpu)) {
+		CLI_ERROR("--perf_event cannot be combined with --probe or --offcpu");
 		return -EINVAL;
 	}
 	if (strcmp(mode->backend, "perf") != 0 && mode->oncpu && mode->offcpu) {

@@ -12,6 +12,7 @@ pub struct Config {
     pub freq: Option<u32>,
     pub record_interval: Option<u32>,
     /// `us` when counts are microseconds (stores mixing on- and off-CPU);
+    /// a perf event name when counts are estimated events of `--perf_event`;
     /// absent when counts are on-CPU samples.
     pub count_unit: Option<String>,
 }
@@ -48,12 +49,14 @@ impl Config {
         })
     }
 
-    /// Counts that add up to one core busy for one second.
+    /// Counts that add up to one core busy for one second; `None` when
+    /// counts are events rather than time.
     pub fn counts_per_core_second(&self) -> Option<f64> {
-        if self.count_unit.as_deref() == Some("us") {
-            return Some(1_000_000.0);
+        match self.count_unit.as_deref() {
+            Some("us") => Some(1_000_000.0),
+            Some(_) => None,
+            None => self.freq.map(|f| f as f64).filter(|f| *f > 0.0),
         }
-        self.freq.map(|f| f as f64).filter(|f| *f > 0.0)
     }
 }
 
@@ -89,5 +92,8 @@ mod tests {
 
         fs::write(&p, "freq: 49\ncount_unit: us\n").unwrap();
         assert_eq!(Config::load(&p).unwrap().counts_per_core_second(), Some(1_000_000.0));
+
+        fs::write(&p, "freq: 49\ncount_unit: branch-misses\n").unwrap();
+        assert_eq!(Config::load(&p).unwrap().counts_per_core_second(), None);
     }
 }

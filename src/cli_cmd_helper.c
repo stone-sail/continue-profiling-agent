@@ -93,6 +93,8 @@ ARG_DEFINE("ring_size_mb", NO_SINGLE_NAME, "ring buffer size in MiB when datapat
 	ARG_DEFINE("offcpu_period", NO_SINGLE_NAME, "perf backend with offcpu: capture one off-CPU stack every N context switches.", true),
 	ARG_DEFINE("offcpu_stack_size", NO_SINGLE_NAME, "perf backend with offcpu: user stack bytes copied per off-CPU sample.", true),
 	ARG_DEFINE("perf_cgroup", NO_SINGLE_NAME, "perf backend: scope sampling to a perf_event cgroup directory, or auto for the cgroup of --pid (cpa itself without --pid). Defaults to auto with --pid or offcpu.", true),
+	ARG_DEFINE("perf_event", NO_SINGLE_NAME, "perf backend: sample this event instead of cpu-clock, e.g. cache-misses, branch-misses, LLC-load-misses, dTLB-load-misses, page-faults, or r<hex> for a raw PMU event. Counts become estimated event counts.", true),
+	ARG_DEFINE("perf_period", NO_SINGLE_NAME, "perf backend with perf_event: sample one stack every N events; 0 samples at --freq per CPU.", true),
 	ARG_DEFINE("max_queue_size", 'm', "maximum in-memory stack event queue length before backpressure.", true),
 	ARG_DEFINE("probe", NO_SINGLE_NAME, "capture stacks only when this probe fires, using bpftrace-style syntax such as 'kprobe:try_to_free_pages' or 'tracepoint:vmscan:mm_shrink_slab_start'. The perf backend needs the kprobe PMU for kprobes and a mounted tracefs for tracepoints.", true),
 

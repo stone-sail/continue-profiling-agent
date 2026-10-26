@@ -389,6 +389,48 @@ def test_cpa_monitor_rejects_perf_cgroup_on_bpf_backend(tmp_path):
     assert "--perf_cgroup requires --backend perf" in f"{stdout}{stderr}"
 
 
+@pytest.mark.parametrize("extra_args", [[], ["--perf_period=1000"]])
+def test_cpa_monitor_perf_event_writes_event_unit(tmp_path, extra_args):
+    # a software event, so the test runs without a hardware PMU
+    stdout, stderr, return_code = run_command(
+        [
+            "monitor",
+            "--backend=perf",
+            "--perf_event=page-faults",
+            *extra_args,
+            "--duration=2",
+            "--store_dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert return_code == 0, f"{stdout}{stderr}"
+    confs = list(tmp_path.glob("cpa_*/conf"))
+    assert confs
+    conf = confs[0].read_text(encoding="utf-8")
+    assert "count_unit: page-faults" in conf
+    assert "perf_event: page-faults" in conf
+
+
+@pytest.mark.parametrize(
+    "extra_args, message",
+    [
+        (["--backend=bpf", "--perf_event=cache-misses"], "require --backend perf"),
+        (["--backend=perf", "--perf_event=no-such-event"], "unknown perf event"),
+        (["--backend=perf", "--perf_event=LLC-load-hits"], "unknown perf event"),
+        (["--backend=perf", "--perf_event=cache-misses", "--offcpu"], "cannot be combined with --probe or --offcpu"),
+        (["--backend=perf", "--perf_period=1000"], "requires --perf_event"),
+    ],
+)
+def test_cpa_monitor_rejects_bad_perf_event(tmp_path, extra_args, message):
+    stdout, stderr, return_code = run_command(
+        ["monitor", *extra_args, "--duration=1", "--store_dir", str(tmp_path)]
+    )
+
+    assert return_code != 0
+    assert message in f"{stdout}{stderr}".lower()
+
+
 def test_cpa_show_rejects_invalid_target_state(tmp_path):
     stdout, stderr, return_code = run_command(
         ["show", "--read", str(tmp_path), "--target_state=idle"]

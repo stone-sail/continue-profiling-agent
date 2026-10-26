@@ -262,6 +262,8 @@ taskset -c 0 libs/libgunwinder/bin/cfi_bench \
 - `--offcpu_period <N>`：perf 后端 `--offcpu` 时每 N 次上下文切换采一次 off-CPU 调用栈，默认 100。
 - `--offcpu_stack_size <BYTES>`：perf 后端 `--offcpu` 时每个 off-CPU 样本复制的用户栈字节数，默认 16384。
 - `--perf_cgroup <auto|DIR>`：perf 后端只采样指定 perf_event cgroup 内的任务；带 `--pid` 或 `--offcpu` 时默认 `auto`：有 `--pid` 时取该进程所在的 cgroup，否则取 cpa 自身所在的 cgroup。只采 on-CPU 时，如果 cgroup 用不了，会退回整机采样。
+- `--perf_event <EVENT>`：perf 后端按这个事件采样，代替 cpu-clock，例如 `cache-misses`、`branch-misses`、`LLC-load-misses`、`dTLB-load-misses`、`page-faults`，或用 `r<hex>` 指定原始 PMU 事件。计数是估算的事件次数，`conf` 写入 `count_unit: <EVENT>`。
+- `--perf_period <N>`：和 `--perf_event` 一起用，每 N 次事件采一个样本；默认 0，表示按 `--freq` 采样。
 - `--probe <SPEC>`：仅在指定 probe 触发时采集栈，采用 bpftrace 风格语法，例如 `kprobe:try_to_free_pages`。perf 后端的 kprobe 需要 kprobe PMU（4.17+），tracepoint 需要挂载 tracefs；不能和 `--offcpu` 同时使用。
 - `--disable_sym, -S`：关闭符号解析，尽量保留原始地址。
 - `--include_full_path`：在可用时保留完整文件路径。

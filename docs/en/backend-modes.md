@@ -86,7 +86,9 @@ selected mode.
 CPA rejects the request if perf-only mode is asked to carry options that perf
 does not implement.
 
-The perf backend only rejects `--probe` combined with `--offcpu`. `--oneshot`,
+The perf backend only rejects `--probe` combined with `--offcpu`, and
+`--perf_event` combined with `--probe` or `--offcpu`; `--perf_event` and
+`--perf_period` are perf-only. `--oneshot`,
 `--comm`, `--kernel_stack`, `--stack_size` and `--probe` keep the BPF semantics
 on the perf backend; `--probe` uses the kprobe PMU (4.17+) for kprobes and
 kretprobes and needs a mounted tracefs for tracepoints; `--comm` filters by

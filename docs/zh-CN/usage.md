@@ -84,6 +84,22 @@ sudo ./build/bin/cpa monitor \
 - off-CPU 栈在 metadata 之后带 `<# OFFCPU SAMPLE: (R|S) #>` 标记：`R` 是被抢占，`S` 是主动让出 CPU。
 - 采集范围默认限定在 perf_event cgroup（`--perf_cgroup auto`）：有 `--pid` 时取该进程所在的 cgroup，否则取 cpa 自身所在的 cgroup。也可以传 cgroup 目录。
 
+perf 后端按硬件或软件事件采样，用来找缓存未命中、分支预测失败集中在哪些函数：
+
+```bash
+sudo ./build/bin/cpa monitor \
+  --backend perf \
+  --pid 12345 \
+  --perf_event branch-misses \
+  --store_dir /var/log/cpa
+```
+
+- `--perf_event` 支持 `perf list` 里的名字：`cycles`、`instructions`、`cache-references`、`cache-misses`、`branches`、`branch-misses`、`ref-cycles` 等硬件事件；`<L1-dcache|L1-icache|LLC|dTLB|iTLB|branch|node>-<loads|stores|prefetches>[-misses]` 形式的 cache 事件；`page-faults`、`major-faults`、`cpu-migrations` 等软件事件；以及 `r<hex>` 原始 PMU 事件。
+- 默认按 `--freq` 采样，内核自动调整每个样本间隔多少次事件；`--perf_period N` 改为每 N 次事件采一个样本。事件发生越频繁，N 应该越大。
+- 每个样本按它代表的事件次数加权，火焰图的宽度就是估算的事件次数。`conf` 写入 `count_unit: <事件名>`，`cpa show` 不再把计数换算成 CPU 占比。
+- 只给出未命中、预测失败发生在哪里，不给出命中率。命中率可以再用 `--perf_event LLC-loads`、`branches` 采一份做分母，或者直接用 `perf stat`。
+- 不能和 `--probe`、`--offcpu` 一起使用。容器里要能访问硬件 PMU，否则打开事件会失败。
+
 ## `cpa show`
 
 `cpa show` 用于读取 `cpa monitor` 生成的 profile 目录。

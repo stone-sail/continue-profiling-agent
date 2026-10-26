@@ -123,6 +123,151 @@ curl -fsSL https://raw.githubusercontent.com/volcengine/continue-profiling-agent
 
 See [docs/en/usage.md](docs/en/usage.md) for more examples.
 
+## Common Analyses
+
+The examples below use the perf backend with `--pid` to profile one process
+(this also works inside containers). `--oneshot` writes a folded-stack file
+once `--duration` seconds pass (or on Ctrl-C), and
+[FlameGraph](https://github.com/brendangregg/FlameGraph)'s `flamegraph.pl`
+turns it into an SVG. `flamegraph.pl` is a single Perl script, so it can be
+copied to machines without internet access.
+
+```bash
+PID=12345        # target process
+DUR=30           # seconds to profile
+FG=./flamegraph.pl
+```
+
+For continuous profiling, drop `--oneshot` and `--duration`, use
+`--store_dir`, and export any time range with
+`cpa show --read <dir> --starttime ... --endtime ... --output_prof x.prof`;
+the SVG step is the same.
+
+### On-CPU: where CPU time goes
+
+```bash
+cpa monitor --backend perf --pid $PID --oneshot --duration $DUR --output_prof oncpu.prof
+$FG --title "on-CPU" --countname samples oncpu.prof > oncpu.svg
+```
+
+### Off-CPU: what threads wait on
+
+```bash
+cpa monitor --backend perf --pid $PID --offcpu --oneshot --duration $DUR --output_prof offcpu.prof
+$FG --title "off-CPU" --countname us --colors io offcpu.prof > offcpu.svg
+```
+
+Counts are microseconds, so width is time spent waiting. Each stack carries a
+`<# OFFCPU SAMPLE: R #>` (preempted) or `<# OFFCPU SAMPLE: S #>` (gave up the
+CPU) frame after the process metadata.
+
+On- and off-CPU in one graph, where width is the wall-clock time of all threads:
+
+```bash
+cpa monitor --backend perf --pid $PID --oncpu --offcpu --oneshot --duration $DUR --output_prof wall.prof
+$FG --title "on + off CPU" --countname us wall.prof > wall.svg
+```
+
+### Cache hits
+
+Record misses and accesses separately. The miss flamegraph shows where misses
+concentrate; dividing the two per function gives the miss rate:
+
+```bash
+cpa monitor --backend perf --pid $PID --perf_event LLC-load-misses --oneshot --duration $DUR --output_prof llc_miss.prof
+cpa monitor --backend perf --pid $PID --perf_event LLC-loads       --oneshot --duration $DUR --output_prof llc_load.prof
+$FG --title "LLC load misses" --countname misses --colors mem llc_miss.prof > llc_miss.svg
+```
+
+Use `L1-dcache-load-misses` / `L1-dcache-loads` for L1 and `dTLB-load-misses`
+/ `dTLB-loads` for the TLB.
+
+Miss rate per leaf function (misses first, accesses second; `miss_rate.awk` is
+below):
+
+```bash
+awk -f miss_rate.awk llc_miss.prof llc_load.prof | head -20
+```
+
+### Branch prediction
+
+```bash
+cpa monitor --backend perf --pid $PID --perf_event branch-misses --oneshot --duration $DUR --output_prof br_miss.prof
+cpa monitor --backend perf --pid $PID --perf_event branches      --oneshot --duration $DUR --output_prof br_all.prof
+$FG --title "branch misses" --countname misses br_miss.prof > br_miss.svg
+awk -f miss_rate.awk br_miss.prof br_all.prof | head -20
+```
+
+`miss_rate.awk`:
+
+```awk
+# usage: awk -f miss_rate.awk <misses.prof> <total.prof>
+# prints: miss rate, misses, total, leaf function; most misses first
+FNR == 1 { f++ }
+{
+	n = $NF
+	stack = substr($0, 1, length($0) - length(n) - 1)
+	sub(/;$/, "", stack)
+	k = split(stack, frames, ";")
+	c[f, frames[k]] += n
+	if (f == 1) leaf[frames[k]] = 1
+}
+END {
+	for (l in leaf) {
+		m = c[1, l]; t = c[2, l]
+		if (t > 0) printf "%.2f%%\t%d\t%d\t%s\n", 100 * m / t, m, t, l | "sort -t'\t' -k2,2nr"
+	}
+}
+```
+
+The two files are recorded one after the other, so the ratio is only
+meaningful under steady load; counts are estimated from samples, so functions
+with few samples give noisy ratios. For overall ratios,
+`perf stat -e LLC-loads,LLC-load-misses,branches,branch-misses -p $PID -- sleep 10`
+is more accurate.
+
+### Lock waits
+
+Threads blocked on user-space locks (`pthread_mutex`, `std::mutex`, condition
+variables) switch out on `futex`, so filter the off-CPU stacks that go through
+it:
+
+```bash
+cpa monitor --backend perf --pid $PID --offcpu --oneshot --duration $DUR --output_prof offcpu.prof
+grep -E 'futex|pthread_mutex|pthread_cond|__lll_lock' offcpu.prof > lock.prof
+$FG --title "lock wait (futex)" --countname us --colors io lock.prof > lock.svg
+```
+
+Kernel spin locks keep the thread on the CPU, so look for them in on-CPU data:
+
+```bash
+grep -E 'spin_lock|queued_spin_lock_slowpath|rwsem|mutex_spin' oncpu.prof > spin.prof
+$FG --title "kernel spin locks" --countname samples spin.prof > spin.svg
+```
+
+### Context switches
+
+Where switches happen most (by count):
+
+```bash
+cpa monitor --backend perf --pid $PID --perf_event context-switches --oneshot --duration $DUR --output_prof cs.prof
+$FG --title "context switches" --countname switches cs.prof > cs.svg
+```
+
+Split involuntary switches (time slice used up or preempted, common with more
+threads than available CPUs or under CPU quota throttling) from voluntary ones
+with the off-CPU R/S markers:
+
+```bash
+grep 'OFFCPU SAMPLE: R' offcpu.prof > preempt.prof     # preempted: waiting for a CPU
+grep 'OFFCPU SAMPLE: S' offcpu.prof > voluntary.prof   # voluntary: locks, IO, timers
+$FG --title "preempted" --countname us preempt.prof > preempt.svg
+$FG --title "voluntary" --countname us voluntary.prof > voluntary.svg
+```
+
+Use `--perf_event cpu-migrations` for CPU migrations and `--perf_event
+page-faults` for page faults the same way.
+
 ## Manual Deployment
 
 After a GitHub release is published, install the portable Linux x86_64 package

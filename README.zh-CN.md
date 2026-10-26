@@ -110,6 +110,129 @@ curl -fsSL https://raw.githubusercontent.com/volcengine/continue-profiling-agent
 
 更多示例见 [docs/zh-CN/usage.md](docs/zh-CN/usage.md)。
 
+## 常见分析场景
+
+下面的例子都用 perf 后端，按 `--pid` 只采一个进程（容器里也能用），用 `--oneshot` 直接输出折叠格式的调用栈文件，采满 `--duration` 秒（或按 Ctrl-C）后写出文件。再用 [FlameGraph](https://github.com/brendangregg/FlameGraph) 的 `flamegraph.pl` 生成 SVG。`flamegraph.pl` 是单个 Perl 脚本，没有外网的机器把它拷过去就能用。
+
+```bash
+PID=12345        # 目标进程
+DUR=30           # 采集秒数
+FG=./flamegraph.pl
+```
+
+长期常驻采集时，去掉 `--oneshot` 和 `--duration`、改用 `--store_dir`，再用 `cpa show --read <目录> --starttime ... --endtime ... --output_prof x.prof` 导出任意时间段，生成 SVG 的方法相同。
+
+### on-CPU：CPU 时间花在哪
+
+```bash
+cpa monitor --backend perf --pid $PID --oneshot --duration $DUR --output_prof oncpu.prof
+$FG --title "on-CPU" --countname samples oncpu.prof > oncpu.svg
+```
+
+### off-CPU：线程在等什么
+
+```bash
+cpa monitor --backend perf --pid $PID --offcpu --oneshot --duration $DUR --output_prof offcpu.prof
+$FG --title "off-CPU" --countname us --colors io offcpu.prof > offcpu.svg
+```
+
+计数单位是微秒，宽度就是等待时长。每条栈在进程信息后面带一个 `<# OFFCPU SAMPLE: R #>`（被抢占）或 `<# OFFCPU SAMPLE: S #>`（主动等待）标记。
+
+把 on-CPU 和 off-CPU 画进一张图，宽度就是所有线程的墙钟时间：
+
+```bash
+cpa monitor --backend perf --pid $PID --oncpu --offcpu --oneshot --duration $DUR --output_prof wall.prof
+$FG --title "on + off CPU" --countname us wall.prof > wall.svg
+```
+
+### 缓存命中
+
+分别采"未命中"和"访问"两份。未命中的火焰图看问题集中在哪；两份按函数相除得到命中率：
+
+```bash
+cpa monitor --backend perf --pid $PID --perf_event LLC-load-misses --oneshot --duration $DUR --output_prof llc_miss.prof
+cpa monitor --backend perf --pid $PID --perf_event LLC-loads       --oneshot --duration $DUR --output_prof llc_load.prof
+$FG --title "LLC load misses" --countname misses --colors mem llc_miss.prof > llc_miss.svg
+```
+
+L1 用 `L1-dcache-load-misses` / `L1-dcache-loads`，TLB 用 `dTLB-load-misses` / `dTLB-loads`。
+
+按叶子函数算命中率（第一个文件是未命中，第二个是访问；`miss_rate.awk` 见下文）：
+
+```bash
+awk -f miss_rate.awk llc_miss.prof llc_load.prof | head -20
+```
+
+### 分支预测
+
+```bash
+cpa monitor --backend perf --pid $PID --perf_event branch-misses --oneshot --duration $DUR --output_prof br_miss.prof
+cpa monitor --backend perf --pid $PID --perf_event branches      --oneshot --duration $DUR --output_prof br_all.prof
+$FG --title "branch misses" --countname misses br_miss.prof > br_miss.svg
+awk -f miss_rate.awk br_miss.prof br_all.prof | head -20
+```
+
+`miss_rate.awk`：
+
+```awk
+# 用法: awk -f miss_rate.awk <未命中.prof> <总数.prof>
+# 输出: 未命中率  未命中数  总数  叶子函数，按未命中数从高到低
+FNR == 1 { f++ }
+{
+	n = $NF
+	stack = substr($0, 1, length($0) - length(n) - 1)
+	sub(/;$/, "", stack)
+	k = split(stack, frames, ";")
+	c[f, frames[k]] += n
+	if (f == 1) leaf[frames[k]] = 1
+}
+END {
+	for (l in leaf) {
+		m = c[1, l]; t = c[2, l]
+		if (t > 0) printf "%.2f%%\t%d\t%d\t%s\n", 100 * m / t, m, t, l | "sort -t'\t' -k2,2nr"
+	}
+}
+```
+
+两份是先后采的，负载稳定时比值才可信；计数是按采样估算的事件次数，样本太少的函数比值波动大。只要整体比率时，直接用 `perf stat -e LLC-loads,LLC-load-misses,branches,branch-misses -p $PID -- sleep 10` 更准。
+
+### 锁等待
+
+用户态锁（`pthread_mutex`、`std::mutex`、条件变量等）阻塞时，线程会在 `futex` 上切走，所以在 off-CPU 数据里过滤出经过 futex 的栈：
+
+```bash
+cpa monitor --backend perf --pid $PID --offcpu --oneshot --duration $DUR --output_prof offcpu.prof
+grep -E 'futex|pthread_mutex|pthread_cond|__lll_lock' offcpu.prof > lock.prof
+$FG --title "lock wait (futex)" --countname us --colors io lock.prof > lock.svg
+```
+
+内核自旋锁不会让线程切走，而是在 CPU 上空转，要在 on-CPU 数据里找：
+
+```bash
+grep -E 'spin_lock|queued_spin_lock_slowpath|rwsem|mutex_spin' oncpu.prof > spin.prof
+$FG --title "kernel spin locks" --countname samples spin.prof > spin.svg
+```
+
+### 上下文切换
+
+哪里切换得最多（按次数）：
+
+```bash
+cpa monitor --backend perf --pid $PID --perf_event context-switches --oneshot --duration $DUR --output_prof cs.prof
+$FG --title "context switches" --countname switches cs.prof > cs.svg
+```
+
+被动切换（时间片用完或被抢占，常见于线程数多于可用 CPU 或被 CPU 配额限流）和主动切换分开看，用 off-CPU 的 R/S 标记：
+
+```bash
+grep 'OFFCPU SAMPLE: R' offcpu.prof > preempt.prof     # 被抢占：在等 CPU
+grep 'OFFCPU SAMPLE: S' offcpu.prof > voluntary.prof   # 主动让出：在等锁、IO、定时器
+$FG --title "preempted" --countname us preempt.prof > preempt.svg
+$FG --title "voluntary" --countname us voluntary.prof > voluntary.svg
+```
+
+线程在 CPU 之间迁移的位置用 `--perf_event cpu-migrations`，缺页用 `--perf_event page-faults`，方法同上。
+
 ## 手动部署
 
 GitHub Release 发布后，可以直接安装 Linux x86_64 portable 包：

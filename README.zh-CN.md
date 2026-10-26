@@ -254,7 +254,7 @@ taskset -c 0 libs/libgunwinder/bin/cfi_bench \
 - `--persistent_day, -P <DAYS>`：只保留最近 N 天的持续采集目录。
 - `--oneshot`：不做目录轮转，只输出一个 flamegraph profile。需要 BPF 后端。
 - `--output_prof, -o <PATH>`：one-shot 模式输出路径，默认 `cpa.prof`。
-- `--pid, -p <PID>`：只采集指定 pid。需要 BPF 后端。
+- `--pid, -p <PID>`：只采集指定 pid。BPF 后端按宿主机 pid 匹配；`--backend perf` 按 cpa 所在 PID 命名空间的 pid 匹配，适合在容器内使用。
 - `--comm, -n <NAME>`：按 comm/group-comm 过滤采集对象。需要 BPF 后端。
 - `--kernel_stack, -K`：只采集内核态栈。需要 BPF 后端。
 - `--offcpu, -u`：采集 off-CPU 样本，只能与 BPF 后端一起使用。

@@ -273,7 +273,7 @@ Shared generic options:
 - `--persistent_day, -P <DAYS>`: retain only the latest N days of continuous stores.
 - `--oneshot`: write a single flamegraph profile instead of rotating store directories. Requires the BPF backend.
 - `--output_prof, -o <PATH>`: output path for one-shot mode. Default: `cpa.prof`.
-- `--pid, -p <PID>`: capture one target pid. Requires the BPF backend.
+- `--pid, -p <PID>`: capture one target pid. The BPF backend matches host pids; `--backend perf` matches pids in the pid namespace of cpa, which suits running inside a container.
 - `--comm, -n <NAME>`: capture tasks matching one comm/group-comm name. Requires the BPF backend.
 - `--kernel_stack, -K`: capture kernel-space stacks only. Requires the BPF backend.
 - `--offcpu, -u`: collect off-CPU samples. Only valid on the BPF backend.

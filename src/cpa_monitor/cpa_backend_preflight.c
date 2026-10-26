@@ -397,18 +397,23 @@ static int cpa_probe_bpf_runtime(const struct cpa_monitor_mode *mode, char *reas
 
 static bool cpa_perf_mode_uses_bpf_only_features(const struct cpa_monitor_mode *mode)
 {
-	return mode->oneshot || mode->offcpu || mode->probe_enabled || mode->kernel_stack || mode->pid > 0 || mode->comm_filter || mode->stack_size != 8192;
+	return mode->oneshot || mode->offcpu || mode->probe_enabled || mode->kernel_stack || mode->comm_filter || mode->stack_size != 8192;
 }
 
+/*
+ * --pid is accepted by both backends but with different pid namespace
+ * semantics: BPF matches init-namespace pids, perf matches pids in the pid
+ * namespace of the cpa process. Never switch backends silently under --pid.
+ */
 static bool cpa_bpf_mode_can_fallback_to_perf(const struct cpa_monitor_mode *mode)
 {
-	return !cpa_perf_mode_uses_bpf_only_features(mode);
+	return !cpa_perf_mode_uses_bpf_only_features(mode) && mode->pid <= 0;
 }
 
 static int cpa_reject_perf_backend(const struct cpa_monitor_mode *mode)
 {
 	if (!strcmp(mode->backend, "perf") && cpa_perf_mode_uses_bpf_only_features(mode)) {
-		CLI_ERROR("perf backend only supports on-cpu continuous profiling; --oneshot, --offcpu, --probe, --pid, --comm, --kernel_stack, and non-default --stack_size require bpf backend");
+		CLI_ERROR("perf backend only supports on-cpu continuous profiling; --oneshot, --offcpu, --probe, --comm, --kernel_stack, and non-default --stack_size require bpf backend");
 		return -EINVAL;
 	}
 

@@ -81,10 +81,14 @@ BPF 路径会用到：
 - `--oneshot`
 - `--offcpu`
 - `--probe`
-- `--pid`
 - `--comm`
 - `--kernel_stack`
 - 非默认 `--stack_size`
+
+`--backend=perf --pid <PID>` 是允许的：perf 后端在用户态按 pid/tid 过滤。
+注意两条后端的 pid 语义不同：BPF 匹配根 PID 命名空间（宿主机）的 pid，
+perf 匹配 cpa 进程所在 PID 命名空间里的 pid。因此在容器内运行 cpa 时，
+应使用 `--backend=perf --pid <容器内 PID>`。
 
 报错原则是：不要让不生效的参数静默混进 perf 路径。
 
@@ -135,6 +139,7 @@ CPA 会检查：
 - 非默认 `--stack_size`
 
 原因很直接：这些能力要么完全是 BPF 专属，要么 perf 路径不能等价保留语义。
+其中 `--pid` 虽然 perf 也支持，但 pid 所属的命名空间不同，所以不会自动回退。
 
 ## perf 后端的真实能力边界
 
@@ -148,7 +153,7 @@ CPA 会检查：
 - `offcpu`
 - `probe`
 - one-shot
-- BPF 侧 `pid/comm/kernel_stack` 过滤
+- BPF 侧 `comm/kernel_stack` 过滤（`--pid` 在 perf 路径上由用户态过滤，见上文）
 - 自定义 `stack_size` 语义
 - IRQOFF 记录
 

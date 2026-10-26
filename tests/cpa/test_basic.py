@@ -154,6 +154,7 @@ def test_cpa_monitor_rejects_bpf_only_offcpu_when_bpf_prereqs_missing(tmp_path):
     [
         ["--kernel_stack"],
         ["--oneshot", "--output_prof", "cpa.prof"],
+        ["--pid=1"],
     ],
 )
 def test_cpa_monitor_rejects_other_bpf_only_modes_when_bpf_prereqs_missing(tmp_path, extra_args):
@@ -250,7 +251,6 @@ def test_cpa_monitor_rejects_perf_backend_with_oneshot(tmp_path):
 @pytest.mark.parametrize(
     "extra_args",
     [
-        ["--pid=123"],
         ["--comm=test-proc"],
         ["--kernel_stack"],
         ["--stack_size=16384"],
@@ -271,3 +271,21 @@ def test_cpa_monitor_rejects_perf_backend_with_bpf_side_options(tmp_path, extra_
     full_output = f"{stdout}{stderr}".lower()
     assert return_code != 0
     assert "require bpf backend" in full_output
+
+
+def test_cpa_monitor_accepts_perf_backend_with_pid(tmp_path):
+    stdout, stderr, return_code = run_command(
+        [
+            "monitor",
+            "--backend=perf",
+            "--freq=49",
+            "--duration=1",
+            "--pid=1",
+            "--store_dir",
+            str(tmp_path),
+        ]
+    )
+
+    full_output = f"{stdout}{stderr}".lower()
+    assert return_code == 0
+    assert "require bpf backend" not in full_output

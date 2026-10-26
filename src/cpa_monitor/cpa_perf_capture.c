@@ -22,6 +22,8 @@
 
 struct perf_capture_config {
 	unsigned int freq;
+	/* pid/tid in the pid namespace of cpa; 0 captures every task */
+	unsigned int pid;
 };
 
 enum cpa_capture_state { STACK_PROCESS_STATE_INIT = 0, STACK_PROCESS_STATE_PAUSE, STACK_PROCESS_STATE_RUNNING, STACK_PROCESS_STATE_EXIT };
@@ -108,6 +110,14 @@ void perf_capture_handler(struct perf_stack_event *event, void *data)
 	if (atomic_load_explicit(&capture_state, memory_order_acquire) != STACK_PROCESS_STATE_RUNNING)
 		return;
 
+	/*
+	 * The kernel reports perf sample pid/tid in the pid namespace of the
+	 * event opener, and as 0 for tasks outside it, so this filter works
+	 * inside containers where BPF-side pid filtering would see host pids.
+	 */
+	if (perf_capture_config.pid && event->pid != perf_capture_config.pid && event->tid != perf_capture_config.pid)
+		return;
+
 	enum drop_sample_result drop_state = should_drop_sample();
 
 	struct stack_sample *sample = perf_stack_sample_build(event, drop_state != DROP_SAMPLE_RESULT_PASS);
@@ -142,6 +152,13 @@ static enum cpa_worker_init_result cpa_perf_capture_init_fn(void *ctx, void *wor
 		CLI_ERROR("Please use frequency in range [9, 99]");
 		return CPA_INIT_FAILED;
 	}
+
+	int pid = atoi(get_arg_by_name(ctx, "pid"));
+	if (pid < 0) {
+		CLI_ERROR("Please use pid >= 0");
+		return CPA_INIT_FAILED;
+	}
+	perf_capture_config.pid = pid;
 
 	if (perf_ctx) {
 		perf_stack_capture_cleanup(perf_ctx);

@@ -91,10 +91,15 @@ The current rejected combinations include:
 - `--oneshot`
 - `--offcpu`
 - `--probe`
-- `--pid`
 - `--comm`
 - `--kernel_stack`
 - non-default `--stack_size`
+
+`--backend=perf --pid <PID>` is accepted: the perf backend filters by pid/tid
+in userspace. The two backends use different pid namespaces: BPF matches pids
+in the root (host) pid namespace, while perf matches pids in the pid namespace
+of the cpa process. When running cpa inside a container, use
+`--backend=perf --pid <in-container pid>`.
 
 The rule is intentional: unsupported options should not silently become no-ops.
 
@@ -145,7 +150,8 @@ CPA hard-fails when BPF is unavailable for any of these modes:
 - non-default `--stack_size`
 
 The reason is straightforward: these features are either BPF-only or not
-semantically preserved by the perf backend.
+semantically preserved by the perf backend. perf does support `--pid`, but in
+a different pid namespace, so `--pid` requests never fall back automatically.
 
 ## Actual perf Backend Limits
 
@@ -160,7 +166,8 @@ The current perf backend does not provide:
 - `offcpu`
 - `probe`
 - one-shot mode
-- BPF-side `pid/comm/kernel_stack` filtering
+- BPF-side `comm/kernel_stack` filtering (`--pid` is filtered in userspace on
+  the perf path, see above)
 - custom `stack_size` semantics
 - IRQOFF records
 

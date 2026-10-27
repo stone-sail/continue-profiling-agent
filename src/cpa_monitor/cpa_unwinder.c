@@ -32,6 +32,8 @@
  */
 
 static struct gu_context *gu_ctx = NULL;
+/* gu_ctx caches are not thread safe; the heap worker symbolizes from the timer thread. */
+static pthread_mutex_t gu_ctx_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t unwind_stat_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t stack_queue_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -357,8 +359,10 @@ static bool init_unwinder_context(void)
 		return false;
 	}
 
+	pthread_mutex_lock(&gu_ctx_lock);
 	unwinder_worker.worker_ctx = new_ctx;
 	gu_ctx = new_ctx;
+	pthread_mutex_unlock(&gu_ctx_lock);
 	unwinder_configured = true;
 
 	return true;
@@ -445,9 +449,11 @@ static void cpa_unwinder_destroy(void *worker_ctx)
 		free(exit_event);
 	}
 
+	pthread_mutex_lock(&gu_ctx_lock);
 	gu_cleanup(unwinder_worker.worker_ctx);
 	unwinder_worker.worker_ctx = NULL;
 	gu_ctx = NULL;
+	pthread_mutex_unlock(&gu_ctx_lock);
 	cpa_kernel_symbol_cache_clear();
 }
 
@@ -594,24 +600,20 @@ static unsigned long cpa_stack_count_from_event(const struct stack_event *event,
 #define FRAME_NAME_BUF_SIZE (4096 + 1024)
 static char frame_name_buf[FRAME_NAME_BUF_SIZE];
 /**
- * Append one symbolized user frame to the shared tracemap.
+ * Format one symbolized user frame the way stacks store it.
  */
-static void process_single_frame_p(const struct gu_frame_record *frame, void *cb_ctx)
+static void cpa_format_frame(const struct gu_frame_record *frame, char *buf, size_t len)
 {
-	struct cli_stackmap *trace_stackmap = (struct cli_stackmap *)cb_ctx;
-
 	if (disable_sym) {
 		if (!frame->elf_info)
-			snprintf(frame_name_buf, FRAME_NAME_BUF_SIZE, "0x%lx [%s]", frame->pc, "anon exec segment");
+			snprintf(buf, len, "0x%lx [%s]", frame->pc, "anon exec segment");
 		else
-			snprintf(frame_name_buf, FRAME_NAME_BUF_SIZE, "0x%lx [%s]", frame->pc, frame->elf_info->elf_file_path);
-		cli_stackmap_append(trace_stackmap, frame_name_buf);
+			snprintf(buf, len, "0x%lx [%s]", frame->pc, frame->elf_info->elf_file_path);
 		return;
 	}
 
 	if (!frame->elf_info) {
-		snprintf(frame_name_buf, FRAME_NAME_BUF_SIZE, "0x%lx [%s]", frame->pc, "anon exec segment");
-		cli_stackmap_append(trace_stackmap, frame_name_buf);
+		snprintf(buf, len, "0x%lx [%s]", frame->pc, "anon exec segment");
 		return;
 	}
 
@@ -627,18 +629,76 @@ static void process_single_frame_p(const struct gu_frame_record *frame, void *cb
 
 	if (!frame->symbol) {
 		if (include_full_path && frame->elf_info->elf_file_path != NULL)
-			snprintf(frame_name_buf, FRAME_NAME_BUF_SIZE, "0x%lx [%s]", frame->pc, elf_file_split_pid);
+			snprintf(buf, len, "0x%lx [%s]", frame->pc, elf_file_split_pid);
 		else
-			snprintf(frame_name_buf, FRAME_NAME_BUF_SIZE, "0x%lx [%s]", frame->pc, frame->elf_info->base_name);
-		cli_stackmap_append(trace_stackmap, frame_name_buf);
+			snprintf(buf, len, "0x%lx [%s]", frame->pc, frame->elf_info->base_name);
 	} else {
-		if (include_full_path && frame->elf_info->elf_file_path != NULL) {
-			snprintf(frame_name_buf, FRAME_NAME_BUF_SIZE, "%s [%s]", frame->symbol, elf_file_split_pid);
-			cli_stackmap_append(trace_stackmap, frame_name_buf);
-		} else {
-			cli_stackmap_append(trace_stackmap, frame->symbol);
-		}
+		if (include_full_path && frame->elf_info->elf_file_path != NULL)
+			snprintf(buf, len, "%s [%s]", frame->symbol, elf_file_split_pid);
+		else
+			snprintf(buf, len, "%s", frame->symbol);
 	}
+}
+
+/**
+ * Append one symbolized user frame to the shared tracemap.
+ */
+static void process_single_frame_p(const struct gu_frame_record *frame, void *cb_ctx)
+{
+	struct cli_stackmap *trace_stackmap = (struct cli_stackmap *)cb_ctx;
+
+	cpa_format_frame(frame, frame_name_buf, FRAME_NAME_BUF_SIZE);
+	cli_stackmap_append(trace_stackmap, frame_name_buf);
+}
+
+struct cpa_symbolize_ctx {
+	cpa_symbolize_cb cb;
+	void *ctx;
+	char buf[FRAME_NAME_BUF_SIZE];
+};
+
+static void cpa_symbolize_frame(const struct gu_frame_record *frame, void *cb_ctx)
+{
+	struct cpa_symbolize_ctx *sym = cb_ctx;
+
+	cpa_format_frame(frame, sym->buf, sizeof(sym->buf));
+	sym->cb(sym->buf, sym->ctx);
+}
+
+int cpa_unwinder_symbolize(int pid, const uint64_t *pcs, int nr, cpa_symbolize_cb cb, void *ctx)
+{
+	static struct cpa_symbolize_ctx sym;
+	static struct gu_stack_info info;
+	static uint64_t regs[64];
+	int ret;
+
+	if (nr <= 0)
+		return 0;
+	if (nr > MAX_FP_STACK_LEVEL)
+		nr = MAX_FP_STACK_LEVEL;
+
+	pthread_mutex_lock(&gu_ctx_lock);
+	if (!gu_ctx) {
+		pthread_mutex_unlock(&gu_ctx_lock);
+		return -1;
+	}
+
+	/* The frame-pointer path symbolizes a given PC chain without reading the stack. */
+	memset(&info, 0, sizeof(info));
+	info.pid = pid;
+	info.regs = regs;
+	info.regs_size = sizeof(regs);
+	memcpy(info.ustack_fp, pcs, nr * sizeof(uint64_t));
+	info.ustack_fp_level = nr;
+	gu_flags_set(&info, GU_FLAG_HINT_SET_FP);
+	gu_flags_set(&info, GU_FLAG_FP_ALLOW_UNKNOWN);
+
+	sym.cb = cb;
+	sym.ctx = ctx;
+	ret = gu_unwind(gu_ctx, &info, cpa_symbolize_frame, &sym);
+	pthread_mutex_unlock(&gu_ctx_lock);
+
+	return ret;
 }
 
 static char irqoff_sample[64] = { 0 };
@@ -705,7 +765,9 @@ static void cpa_finish_unwind_sample(struct stack_sample *sample)
 		return;
 
 	last_sample_ts = 0;
+	pthread_mutex_lock(&gu_ctx_lock);
 	cpa_unwind(sample);
+	pthread_mutex_unlock(&gu_ctx_lock);
 	last_sample_ts = sample->timestamp;
 
 	free(sample);
@@ -717,7 +779,9 @@ static void cpa_finish_unwind_sample(struct stack_sample *sample)
 	pthread_mutex_unlock(&unwind_stat_lock);
 
 	update_drop_policy_queue_len(pending_queue_size);
+	pthread_mutex_lock(&gu_ctx_lock);
 	cpa_handle_pid_exit_events(last_sample_ts);
+	pthread_mutex_unlock(&gu_ctx_lock);
 }
 
 void cpa_emit_kernel_only_sample(const struct stack_event *event, unsigned int sample_freq)

@@ -112,6 +112,18 @@ sudo ./build/bin/cpa monitor --pid 12345 --backend perf --perf_stat default --st
 - `--oneshot` 时不写文件，结束时打印总量、每秒速率和派生比率。
 - BPF 后端也可以用；`--pid` 是宿主机 PID 时找不到对应 cgroup，会退回整机计数。
 
+jemalloc 堆内存（目标进程以 `MALLOC_CONF=prof:true,prof_prefix:/export/jeprof/heap,...` 启动）：
+
+```bash
+sudo ./build/bin/cpa monitor --pid 12345 --backend perf --jemalloc_heap /export/jeprof/heap --store_dir /var/log/cpa
+```
+
+- 每 `record_interval` 按序号读取新的 `<prefix>.<pid>.<seq>.<i|m|u|f>N.heap`（启动前已有的跳过，写入不到 1 秒的等下一轮），每个 dump 写成 `<store>/jemalloc` 里的一条记录。目录结构和主存储相同（`conf`、`strmap`、`idsmap`、`stack.bin`），`conf` 里是 `count_unit: bytes`。
+- 地址用和 CPU 采样相同的 unwinder 上下文做符号化，调用栈顶部的 jemalloc、malloc/new 帧会去掉；进程已经退出或者 unwinder 不可用时，保留十六进制地址。
+- 字节数按 jeprof 的方法反采样：n 个对象、平均 s 字节的调用栈，按 `n / (1 - exp(-s / 2^lg_prof_sample))` 估算。
+- `--jemalloc_mode inuse`（默认）：`count_mode: snapshot`，`cpa show` 选中一段时间时只导出最后一条快照。`alloc`：`count_mode: delta`，存两次 dump 之间新分配的字节（需要 `prof_accum:true`），可以累加；第一个 dump 只用作基线。
+- `--jemalloc_remove_dump 1` 在入库后删除 dump 文件。不能和 `--oneshot` 一起用。
+
 ## `cpa show`
 
 `cpa show` 用于读取 `cpa monitor` 生成的 profile 目录。

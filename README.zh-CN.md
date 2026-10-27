@@ -249,6 +249,28 @@ $FG --title "voluntary" --countname us voluntary.prof > voluntary.svg
 
 线程在 CPU 之间迁移的位置用 `--perf_event cpu-migrations`，缺页用 `--perf_event page-faults`，方法同上。
 
+### jemalloc 堆内存
+
+进程要用带 profiling 的 jemalloc，并在启动时打开 `prof:true`，让 jemalloc 定期 dump `.heap` 文件。CPA 每个 `record_interval` 读一次新 dump，用 CPU 采样时同一套符号化把地址解析成函数名，按调用栈去重后写入 `<store>/jemalloc`（zstd 压缩的 `stack.bin`，单位是字节），不需要 jeprof，也不需要在节点上保留原始 dump。
+
+```bash
+# 目标进程：每分配 1 GiB dump 一次（lg_prof_interval:30），采样间隔 512 KiB
+MALLOC_CONF="prof:true,prof_accum:true,lg_prof_sample:19,lg_prof_interval:30,prof_prefix:/export/jeprof/heap" ./server
+
+# CPA：同时记录 CPU 采样和堆内存；--jemalloc_remove_dump 1 在入库后删除 .heap
+cpa monitor --backend perf --pid $PID --jemalloc_heap /export/jeprof/heap --jemalloc_remove_dump 1 --store_dir /var/log/cpa
+
+# 某个时刻的在用内存（inuse，默认）：时间段里最后一次 dump
+cpa show --read /var/log/cpa/cpa_YYMMDD/jemalloc --starttime 14:00:00 --endtime 14:05:00 --output_prof heap.prof
+$FG --title "jemalloc in use" --colors mem --countname bytes heap.prof > heap.svg
+```
+
+- `--jemalloc_heap` 填进程的 `prof_prefix`，CPA 只读 `<prefix>.<pid>.*.heap`；启动前已有的 dump 会跳过。dump 可以来自 `lg_prof_interval`、`prof_gdump`、`mallctl("prof.dump")`，或者应用自己的 dump 接口。
+- `--jemalloc_mode inuse`（默认）：每次 dump 存成一条在用内存快照，时间段内只导出最后一条，不会把多次快照相加。
+- `--jemalloc_mode alloc`：存两次 dump 之间新分配的字节数（需要 `prof_accum:true`），可以像 CPU 采样一样按时间段累加，用来找分配热点。
+- 计数已经按 jeprof 的方法做了反采样，是估算的真实字节数；调用栈顶部的 jemalloc 和 malloc/new 帧会去掉。
+- 只能观察到 `opt.prof` 为 true 的进程；它只能在启动时通过 `MALLOC_CONF` 或编译进程序的 `malloc_conf` 打开，运行中改不了。
+
 ## 手动部署
 
 GitHub Release 发布后，可以直接安装 Linux x86_64 portable 包：
@@ -403,6 +425,9 @@ taskset -c 0 libs/libgunwinder/bin/cfi_bench \
 - `--perf_cgroup <auto|DIR>`：perf 后端只采样指定 perf_event cgroup 内的任务；带 `--pid` 或 `--offcpu` 时默认 `auto`：有 `--pid` 时取该进程所在的 cgroup，否则取 cpa 自身所在的 cgroup。只采 on-CPU 时，如果 cgroup 用不了，会退回整机采样。
 - `--perf_event <EVENT>`：perf 后端按这个事件采样，代替 cpu-clock，例如 `cache-misses`、`branch-misses`、`LLC-load-misses`、`dTLB-load-misses`、`page-faults`，或用 `r<hex>` 指定原始 PMU 事件。计数是估算的事件次数，`conf` 写入 `count_unit: <EVENT>`。
 - `--perf_period <N>`：和 `--perf_event` 一起用，每 N 次事件采一个样本；默认 0，表示按 `--freq` 采样。
+- `--jemalloc_heap <PREFIX>`：把 `--pid` 进程的 jemalloc heap dump（`<PREFIX>.<pid>.*.heap`）按 CPA 格式记录到 `<store>/jemalloc`，单位字节。
+- `--jemalloc_mode <inuse|alloc>`：inuse（默认）每次 dump 存一条在用内存快照；alloc 存两次 dump 之间的新分配字节（需要 `prof_accum:true`）。
+- `--jemalloc_remove_dump <0|1>`：dump 入库后删除 `.heap` 文件。
 - `--perf_stat <EVENTS|default>`：同时按 `record_interval` 记录这些事件的计数总量（类似 perf stat），逗号分隔；存储模式写入 `<store>/perf_stat`，`--oneshot` 结束时打印汇总。
 - `--probe <SPEC>`：仅在指定 probe 触发时采集栈，采用 bpftrace 风格语法，例如 `kprobe:try_to_free_pages`。perf 后端的 kprobe 需要 kprobe PMU（4.17+），tracepoint 需要挂载 tracefs；不能和 `--offcpu` 同时使用。
 - `--disable_sym, -S`：关闭符号解析，尽量保留原始地址。

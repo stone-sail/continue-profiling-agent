@@ -144,6 +144,29 @@ sudo ./build/bin/cpa monitor --pid 12345 --backend perf --perf_stat default --st
 - Also works with the BPF backend; a host `--pid` that has no cgroup visible to
   cpa falls back to host-wide counting.
 
+jemalloc heap (the target starts with `MALLOC_CONF=prof:true,prof_prefix:/export/jeprof/heap,...`):
+
+```bash
+sudo ./build/bin/cpa monitor --pid 12345 --backend perf --jemalloc_heap /export/jeprof/heap --store_dir /var/log/cpa
+```
+
+- Every `record_interval` the new `<prefix>.<pid>.<seq>.<i|m|u|f>N.heap` dumps
+  are read in sequence order (dumps that existed at startup are skipped, files
+  younger than 1 s wait for the next tick), one record per dump in
+  `<store>/jemalloc`. The directory has the usual layout (`conf`, `strmap`,
+  `idsmap`, `stack.bin`) with `count_unit: bytes`.
+- Addresses are symbolized with the unwinder context used for CPU samples, and
+  jemalloc and malloc/new frames at the top of each stack are dropped; when the
+  process is gone or the unwinder is unavailable, hex addresses are kept.
+- Bytes are unsampled the way jeprof does it: a stack with n objects of s bytes
+  on average counts as `n / (1 - exp(-s / 2^lg_prof_sample))` objects.
+- `--jemalloc_mode inuse` (default) writes `count_mode: snapshot`, and
+  `cpa show` exports the last snapshot of a selected range. `alloc` writes
+  `count_mode: delta` with the bytes allocated between two dumps (needs
+  `prof_accum:true`), which add up; the first dump is only the baseline.
+- `--jemalloc_remove_dump 1` deletes dumps once recorded. Not available with
+  `--oneshot`.
+
 ## `cpa show`
 
 `cpa show` reads a stored profile directory.

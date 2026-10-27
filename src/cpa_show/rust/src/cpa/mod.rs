@@ -187,7 +187,10 @@ impl Store {
         mut cb: impl FnMut(u32, u64) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         let end = end.min(self.record_count());
-        let start = start.min(end);
+        let mut start = start.min(end);
+        if self.config.is_snapshot() && end > start {
+            start = end - 1;
+        }
         let mut f = self.stack_file.lock();
         for i in start..end {
             let _ = self

@@ -511,3 +511,95 @@ def test_cpa_monitor_perf_stack_size_defaults_to_perf_limit(tmp_path, extra_args
     confs = list(tmp_path.glob("cpa_*/conf"))
     assert confs
     assert f"stack_size: {stack_size}" in confs[0].read_text(encoding="utf-8")
+
+
+def _write_jemalloc_heap(path, objs, nbytes):
+    # Same layout as jemalloc 5 prof_dump: header, totals, then one backtrace.
+    path.write_text(
+        "heap_v2/524288\n"
+        f"  t*: {objs}: {nbytes} [0: 0]\n"
+        f"  t0: {objs}: {nbytes} [0: 0]\n"
+        "@ 0x1000 0x2000 0x3000\n"
+        f"  t*: {objs}: {nbytes} [0: 0]\n"
+        f"  t0: {objs}: {nbytes} [0: 0]\n"
+        "\n"
+        "MAPPED_LIBRARIES:\n",
+        encoding="utf-8",
+    )
+
+
+def test_cpa_monitor_jemalloc_heap_store_and_show(tmp_path):
+    import threading
+    import time
+
+    heap_dir = tmp_path / "heap"
+    heap_dir.mkdir()
+    store_dir = tmp_path / "store"
+    store_dir.mkdir()
+    target = subprocess.Popen(["sleep", "60"])
+    prefix = heap_dir / "jeprof"
+    # Dumps that exist before cpa starts are history and must be skipped.
+    _write_jemalloc_heap(heap_dir / f"jeprof.{target.pid}.0.m0.heap", 9, 9000)
+
+    def dump_later():
+        # The store's jemalloc directory appears on the first tick after init.
+        deadline = time.time() + 20
+        while not list(store_dir.glob("cpa_*/jemalloc")) and time.time() < deadline:
+            time.sleep(0.1)
+        _write_jemalloc_heap(heap_dir / f"jeprof.{target.pid}.1.i0.heap", 1, 1000)
+        time.sleep(1.5)
+        _write_jemalloc_heap(heap_dir / f"jeprof.{target.pid}.2.i1.heap", 2, 4000)
+
+    writer = threading.Thread(target=dump_later)
+    writer.start()
+    try:
+        stdout, stderr, return_code = run_command(
+            [
+                "monitor",
+                "--backend=perf",
+                f"--pid={target.pid}",
+                f"--jemalloc_heap={prefix}",
+                "--jemalloc_remove_dump=1",
+                "--duration=12",
+                "--store_dir",
+                str(store_dir),
+            ]
+        )
+    finally:
+        writer.join()
+        target.kill()
+        target.wait()
+
+    output = f"{stdout}{stderr}"
+    assert return_code == 0, output
+    assert "jemalloc_heap recorded 2 dumps" in output
+    assert (heap_dir / f"jeprof.{target.pid}.0.m0.heap").exists()
+    assert not (heap_dir / f"jeprof.{target.pid}.1.i0.heap").exists()
+
+    stores = list(store_dir.glob("cpa_*/jemalloc"))
+    assert stores
+    conf = (stores[0] / "conf").read_text(encoding="utf-8")
+    assert "count_unit: bytes" in conf
+    assert "count_mode: snapshot" in conf
+
+    prof = tmp_path / "heap.prof"
+    stdout, stderr, return_code = run_command(
+        ["show", "--read", str(stores[0]), "--starttime=00:00:00", "--endtime=23:59:59", "--output_prof", str(prof)]
+    )
+    output = f"{stdout}{stderr}"
+    assert return_code == 0, output
+    assert "Snapshot store" in output
+    lines = prof.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    # Last snapshot only: 2 objects of 2000 bytes unsampled at 512 KiB is ~1 MiB.
+    count = int(lines[0].rsplit(" ", 1)[1])
+    assert 1_040_000 < count < 1_060_000
+
+
+def test_cpa_monitor_jemalloc_heap_needs_pid(tmp_path):
+    stdout, stderr, return_code = run_command(
+        ["monitor", "--backend=perf", f"--jemalloc_heap={tmp_path}/jeprof", "--duration=1", "--store_dir", str(tmp_path)]
+    )
+
+    assert return_code != 0
+    assert "--jemalloc_heap needs --pid" in f"{stdout}{stderr}"

@@ -162,4 +162,25 @@ void cpa_emit_kernel_only_sample(const struct stack_event *event, unsigned int s
  */
 void cpa_unwinder_drain_pending(void);
 
+/**
+ * cpa_symbolize_cb - receive one formatted frame name
+ * @frame: frame name, valid only during the call
+ * @ctx: caller context
+ */
+typedef void (*cpa_symbolize_cb)(const char *frame, void *ctx);
+
+/**
+ * cpa_unwinder_symbolize - symbolize user PCs of a process
+ * @pid: process the addresses belong to
+ * @pcs: PCs, innermost first
+ * @nr: number of PCs
+ * @cb: called once per frame, innermost first, with the stack frame name
+ * @ctx: passed to @cb
+ *
+ * Uses the shared unwinder context, so symbols match the sampled stacks.
+ *
+ * Return: frames emitted, or negative when the unwinder is unavailable.
+ */
+int cpa_unwinder_symbolize(int pid, const uint64_t *pcs, int nr, cpa_symbolize_cb cb, void *ctx);
+
 #endif /* CPA_UNWINDER_H */

@@ -51,6 +51,12 @@ impl Config {
 
     /// Counts that add up to one core busy for one second; `None` when
     /// counts are events rather than time.
+    /// jemalloc inuse stores keep one heap snapshot per record; a range shows
+    /// its last snapshot instead of a sum.
+    pub fn is_snapshot(&self) -> bool {
+        self.raw.get("count_mode").map(String::as_str) == Some("snapshot")
+    }
+
     pub fn counts_per_core_second(&self) -> Option<f64> {
         match self.count_unit.as_deref() {
             Some("us") => Some(1_000_000.0),
@@ -95,5 +101,13 @@ mod tests {
 
         fs::write(&p, "freq: 49\ncount_unit: branch-misses\n").unwrap();
         assert_eq!(Config::load(&p).unwrap().counts_per_core_second(), None);
+
+        fs::write(&p, "count_unit: bytes\ncount_mode: snapshot\n").unwrap();
+        let c = Config::load(&p).unwrap();
+        assert_eq!(c.counts_per_core_second(), None);
+        assert!(c.is_snapshot());
+
+        fs::write(&p, "count_unit: bytes\ncount_mode: delta\n").unwrap();
+        assert!(!Config::load(&p).unwrap().is_snapshot());
     }
 }

@@ -289,6 +289,41 @@ $FG --title "voluntary" --countname us voluntary.prof > voluntary.svg
 Use `--perf_event cpu-migrations` for CPU migrations and `--perf_event
 page-faults` for page faults the same way.
 
+### jemalloc heap
+
+The process has to use jemalloc built with profiling and start with
+`prof:true` so jemalloc dumps `.heap` files. Every `record_interval` CPA reads
+the new dumps, symbolizes the addresses with the same unwinder as CPU samples,
+and stores the deduplicated stacks in `<store>/jemalloc` (a zstd `stack.bin`
+counted in bytes). jeprof is not needed and the raw dumps need not be kept.
+
+```bash
+# target: dump after every 1 GiB allocated, sample every 512 KiB
+MALLOC_CONF="prof:true,prof_accum:true,lg_prof_sample:19,lg_prof_interval:30,prof_prefix:/export/jeprof/heap" ./server
+
+# CPA: CPU samples and heap together; --jemalloc_remove_dump 1 deletes recorded dumps
+cpa monitor --backend perf --pid $PID --jemalloc_heap /export/jeprof/heap --jemalloc_remove_dump 1 --store_dir /var/log/cpa
+
+# live memory at a point in time (inuse, the default): the last dump of the range
+cpa show --read /var/log/cpa/cpa_YYMMDD/jemalloc --starttime 14:00:00 --endtime 14:05:00 --output_prof heap.prof
+$FG --title "jemalloc in use" --colors mem --countname bytes heap.prof > heap.svg
+```
+
+- `--jemalloc_heap` is the process's `prof_prefix`; CPA reads only
+  `<prefix>.<pid>.*.heap` and skips dumps that existed before it started.
+  Dumps may come from `lg_prof_interval`, `prof_gdump`, `mallctl("prof.dump")`
+  or the application's own dump endpoint.
+- `--jemalloc_mode inuse` (default) stores each dump as a snapshot of live
+  bytes; a time range exports its last snapshot instead of adding them up.
+- `--jemalloc_mode alloc` stores the bytes allocated between two dumps (needs
+  `prof_accum:true`), which add up over time like CPU samples and show
+  allocation hot spots.
+- Counts are unsampled the way jeprof does it, so they estimate real bytes;
+  jemalloc and malloc/new frames at the top of each stack are dropped.
+- Only processes with `opt.prof` true can be observed; it is set at startup
+  through `MALLOC_CONF` or a compiled-in `malloc_conf` and cannot be turned on
+  later.
+
 ## Manual Deployment
 
 After a GitHub release is published, install the portable Linux x86_64 package
@@ -449,6 +484,9 @@ Shared generic options:
 - `--perf_cgroup <auto|DIR>`: on the perf backend, sample only tasks in this perf_event cgroup. Defaults to `auto` with `--pid` or `--offcpu`: the cgroup of the `--pid` process, or of cpa itself without `--pid`. On-CPU-only runs fall back to host-wide sampling when the cgroup cannot be used.
 - `--perf_event <EVENT>`: on the perf backend, sample this event instead of cpu-clock, such as `cache-misses`, `branch-misses`, `LLC-load-misses`, `dTLB-load-misses`, `page-faults`, or `r<hex>` for a raw PMU event. Counts are estimated event counts and `conf` records `count_unit: <EVENT>`.
 - `--perf_period <N>`: with `--perf_event`, sample one stack every N events; the default 0 samples at `--freq`.
+- `--jemalloc_heap <PREFIX>`: record the jemalloc heap dumps of `--pid` (`<PREFIX>.<pid>.*.heap`) in the CPA format under `<store>/jemalloc`, counted in bytes.
+- `--jemalloc_mode <inuse|alloc>`: inuse (default) stores one live-bytes snapshot per dump; alloc stores bytes allocated between dumps (needs `prof_accum:true`).
+- `--jemalloc_remove_dump <0|1>`: delete each `.heap` dump once it is recorded.
 - `--perf_stat <EVENTS|default>`: also count these comma-separated events every `record_interval`, like perf stat; stores write `<store>/perf_stat`, and `--oneshot` prints a summary on exit.
 - `--probe <SPEC>`: capture stacks only when a probe fires, using bpftrace-style syntax such as `kprobe:try_to_free_pages`. On the perf backend kprobes need the kprobe PMU (4.17+) and tracepoints need a mounted tracefs; cannot be combined with `--offcpu`.
 - `--disable_sym, -S`: disable symbol parsing and keep raw addresses where applicable.

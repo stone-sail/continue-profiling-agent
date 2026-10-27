@@ -192,6 +192,30 @@ static unsigned int cpa_show_record_interval(const char *read_dir)
 	return interval ? interval : 1;
 }
 
+/* jemalloc inuse stores hold one heap snapshot per record; snapshots do not add up. */
+static bool cpa_show_snapshot_store(const char *read_dir)
+{
+	char *path = path_join(read_dir, "conf");
+	char line[256];
+	bool snapshot = false;
+	FILE *fp;
+
+	if (!path)
+		return false;
+	fp = fopen(path, "r");
+	free(path);
+	if (!fp)
+		return false;
+	while (fgets(line, sizeof(line), fp)) {
+		if (strncmp(line, "count_mode: snapshot", 20) == 0) {
+			snapshot = true;
+			break;
+		}
+	}
+	fclose(fp);
+	return snapshot;
+}
+
 /*
  * Sum <read>/perf_stat lines whose record_ms falls in [start, end] (end 0 means
  * open ended) and print totals and ratios; level 2 also prints each line.
@@ -416,6 +440,12 @@ static int cpa_show_render(void *ctx)
 		CLI_ERROR("Not Found Enough Records Start in %s Len %d, max is %d", start_time_str, output_num, dump_info.record_count - record_index);
 		out_ret = -1;
 		goto end;
+	}
+
+	if (output_num > 1 && cpa_show_snapshot_store(read_file)) {
+		CLI_OUTPUT("Snapshot store: exporting the last of %d records in range", output_num);
+		record_index += output_num - 1;
+		output_num = 1;
 	}
 
 	starttime = dump_info.records[record_index].starttime;
